@@ -1,0 +1,45 @@
+// Get SCRIPT_DIR from environment variable
+// export INPUT_DIR GRID_X GRID_Y OUTPUT_NAME STITCH_PATTERN SCRIPT_DIR
+
+print("==============================================================");
+print("Starting FovIntegration/12_IF2_stitch.bsh script...");
+String INPUT_DIR = System.getenv("INPUT_DIR");
+String GRID_X = System.getenv("GRID_X");
+String GRID_Y = System.getenv("GRID_Y");
+String FIRST_INDEX = System.getenv("FIRST_INDEX");
+    
+String OUTPUT_NAME = System.getenv("OUTPUT_NAME");
+String STITCH_PATTERN = System.getenv("STITCH_PATTERN");
+String SCRIPT_DIR = System.getenv("SCRIPT_DIR");
+
+
+// 构造传给宏的参数（用空格或分号分隔，根据宏解析逻辑）
+String args = INPUT_DIR + " " + GRID_X + " " + GRID_Y + " " + FIRST_INDEX + " " + OUTPUT_NAME + " " + STITCH_PATTERN;
+print("Arguments: " + args);
+
+// Check environment variables are set
+if (SCRIPT_DIR == null || SCRIPT_DIR.isEmpty()) {
+    throw new RuntimeException("Environment variable 'SCRIPT_DIR' is not set.");
+}
+
+// Set MPICBG parameters
+mpicbg.stitching.GlobalOptimization.ignoreZ = true;
+print("Set mpicbg.stitching.GlobalOptimization.ignoreZ = true;");
+
+// Import IJ
+import ij.IJ;
+import java.io.File;
+
+// Build macro path
+String macroPath = SCRIPT_DIR + "/12_IF3_Macro.ijm";
+
+// Validate macro file exists
+File macroFile = new File(macroPath);
+if (!macroFile.exists()) {
+    throw new RuntimeException("Macro file not found: " + macroPath);
+}
+
+// Run macro script
+print("Running macro script: " + macroPath);
+IJ.runMacroFile(macroPath, args);
+print("Finished running macro script.");

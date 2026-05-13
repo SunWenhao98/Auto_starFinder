@@ -1,0 +1,154 @@
+#!/bin/bash
+# --- SLURM 任务提交指令 ---
+#SBATCH -o logs_dapi_segmentation/dapi_segmentation_%A_%a.out
+#SBATCH -e logs_dapi_segmentation/dapi_segmentation_%A_%a.err
+#SBATCH -J dapi_segmentation
+#SBATCH -p GPUA800
+#SBATCH -n 1
+#SBATCH --gres=gpu:1
+#SBATCH --mem=128G
+
+#SBATCH --time=24:00:00
+#SBATCH --array=1-25%25
+
+# 加载环境
+echo "Loading Environment..."
+module purge
+source /gpfs/share/home/2401111558/anaconda3/etc/profile.d/conda.sh
+conda activate cellpose
+
+mkdir -p logs_dapi_segmentation
+start_time=$(date +%s)
+echo "Start time: $(date '+%Y-%m-%d %H:%M:%S')"
+
+echo "============= SLURM Job Info =================="
+echo "Job ID:          $SLURM_JOB_ID"
+echo "Job Name:        $SLURM_JOB_NAME"
+echo "User:            $SLURM_JOB_USER"
+echo "Submit Host:     $SLURM_SUBMIT_HOST"
+echo "Submit Directory:$SLURM_SUBMIT_DIR"
+echo "Node List:       $SLURM_NODELIST"
+echo "Job Node:        $SLURMD_NODENAME"
+echo "Number of Nodes: $SLURM_JOB_NUM_NODES"
+echo "Partition:       $SLURM_JOB_PARTITION"
+
+echo "============= CPU/Memory Allocation ============="
+echo "CPUs per task:   $SLURM_CPUS_PER_TASK"
+echo "Allocated CPUs:  $SLURM_JOB_CPUS_PER_NODE"  # 实际分配的每节点CPU数
+
+echo "Tasks per node:  $SLURM_NTASKS_PER_NODE"
+echo "Total Tasks:     $SLURM_NTASKS"
+echo "Memory per node: $SLURM_MEM_PER_NODE MB"
+
+echo "============= GPU Allocation Info ==============="
+echo "Allocated GPUs:  $SLURM_GPUS"
+echo "GPU Devices:     $CUDA_VISIBLE_DEVICES"
+echo "GPU Type:       $(nvidia-smi -L | cut -d'(' -f1)"
+
+echo "============= GPU Runtime Status =============="
+nvidia-smi --query-gpu=index,name,utilization.gpu,memory.total,memory.used --format=csv,noheader
+echo "================================================="
+
+# ================= Processing =================
+
+
+
+
+# 1. 定义位置数组
+Position_nums=(012 049 115 156 205 228 301 342)
+CURRENT_POS=${Position_nums[$((SLURM_ARRAY_TASK_ID-1))]}
+
+# 2. 定义路径
+PROJECT_ROOT="/gpfs/share/home/2300012257/01_project/03_Cell_Segmentation/20251113_benchmarking"
+
+# 脚本位置
+SCRIPT_DIR="${PROJECT_ROOT}/Baysor/scripts"
+
+# 原始数据位置
+RAW_DATA_ROOT="${PROJECT_ROOT}/raw_data"
+CURRENT_RAW_DIR="${RAW_DATA_ROOT}/Position${CURRENT_POS}"
+
+# 输出位置
+RESULTS_ROOT="${PROJECT_ROOT}/Baysor/results"
+CURRENT_OUTPUT_DIR="${RESULTS_ROOT}/Position${CURRENT_POS}"
+
+# 3. 参数设置
+DIAMETER=100         # 细胞核直径
+XY_SCALE=0.108       # 微米/像素
+Z_SCALE=0.27         # Z轴间距
+
+# ================= PREPARATION =================
+
+# 创建输出目录
+mkdir -p "${CURRENT_OUTPUT_DIR}"
+
+# 智能查找输入文件
+# 1. 找 DAPI 图像 (tif/tiff)
+INPUT_DAPI=$(find "${CURRENT_RAW_DIR}" -maxdepth 1 -type f \( -iname "*.tif" -o -iname "*.tiff" \) | head -n 1)
+
+# 2. 找 CSV 转录本文件
+INPUT_TRANSCRIPTS=$(find "${CURRENT_RAW_DIR}" -maxdepth 1 -type f -iname "*.csv" | head -n 1)
+
+# 检查文件
+if [ -z "$INPUT_DAPI" ]; then
+    echo "Error: 在 ${CURRENT_RAW_DIR} 未找到 TIF 文件！"
+    exit 1
+fi
+if [ -z "$INPUT_TRANSCRIPTS" ]; then
+    echo "Error: 在 ${CURRENT_RAW_DIR} 未找到 CSV 文件！"
+    exit 1
+fi
+
+echo "Scripts Dir:  ${SCRIPT_DIR}"
+echo "Input DAPI:   ${INPUT_DAPI}"
+echo "Input CSV:    ${INPUT_TRANSCRIPTS}"
+echo "Output Dir:   ${CURRENT_OUTPUT_DIR}"
+
+
+
+# ================= EXECUTION =================
+
+# --- 定义中间文件变量 ---
+# 您的 Python 脚本会生成 .npy 和 .tif 两个文件
+# 我们把 output_base 设为不带后缀的路径
+CELLPOSE_OUTPUT_BASE="${CURRENT_OUTPUT_DIR}/cellpose_dapi_seg"
+EXPECTED_NPY="${CELLPOSE_OUTPUT_BASE}.npy"
+BAYSOR_INPUT_FILE="${CURRENT_OUTPUT_DIR}/baysor_input_position${CURRENT_POS}.csv"
+
+
+# --- 步骤一: 运行 2D Cellpose 分割 ---
+echo ">>> Step 1: Running 2D Cellpose Segmentation..."
+
+# 使用您的 Python 脚本特定的参数格式 (--input, --output_base)
+python "${SCRIPT_DIR}/run_cellpose.py" \
+    --input "${INPUT_DAPI}" \
+    --output_base "${CELLPOSE_OUTPUT_BASE}" \
+    --diameter ${DIAMETER}
+
+# 检查是否生成了 npy 文件
+if [ ! -f "$EXPECTED_NPY" ]; then
+    echo "Error: Cellpose 运行结束，但未找到输出文件: ${EXPECTED_NPY}"
+    exit 1
+fi
+echo "Cellpose 2D Output Found: ${EXPECTED_NPY}"
+
+
+# --- 步骤二: 生成 Baysor 输入文件 ---
+echo ">>> Step 2: Creating Baysor Input CSV..."
+
+# 调用 create_Baysor_input.py
+python "${SCRIPT_DIR}/create_Baysor_input.py" \
+    --starmap_coords "${INPUT_TRANSCRIPTS}" \
+    --cellpose_mask "${EXPECTED_NPY}" \
+    --output_csv "${BAYSOR_INPUT_FILE}" \
+    --xy_scale ${XY_SCALE} \
+    --z_scale ${Z_SCALE}
+
+if [ -f "$BAYSOR_INPUT_FILE" ]; then
+    echo "SUCCESS: Baysor input created at ${BAYSOR_INPUT_FILE}"
+else
+    echo "Error: Baysor input creation failed."
+    exit 1
+fi
+
+echo "Position ${CURRENT_POS} 全部完成。"

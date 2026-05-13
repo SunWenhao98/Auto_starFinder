@@ -1,0 +1,20 @@
+# 忽略所有数据和图像
+*.tif
+*.tiff
+*.csv
+*.tsv
+*.h5ad
+
+# 忽略测试脚本的格式
+*.ipynb
+
+# 忽略 SLURM 日志
+*.out
+*.err
+
+# 忽略 Python 缓存
+__pycache__
+
+# 忽略特定文件夹
+01_upstream_pipeline/00_utils/
+02_downstream_pipeline/
