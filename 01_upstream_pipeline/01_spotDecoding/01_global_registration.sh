@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH -J Global_Registration
+#SBATCH -J GR
 #SBATCH -o logs_global_registration/global_registration_%A_%a.out
 #SBATCH -e logs_global_registration/global_registration_%A_%a.err
 
@@ -18,7 +18,7 @@ start_time=$(date +%s)
 echo "Start time: $(date '+%Y-%m-%d %H:%M:%S')"
 
 
-CORE_MATLAB_DIR="~/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/core_programs/01_starfinder_for_OT1"
+CORE_MATLAB_DIR="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/core_programs"
 export CORE_MATLAB_DIR
 
 # SCRIPT_DIR=${SLURM_SUBMIT_DIR:-$(pwd)}
