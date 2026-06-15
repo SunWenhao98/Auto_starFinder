@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import anndata as ad
 from pathlib import Path
+import scipy.sparse as sp
 
 if __name__ == '__main__':
 
@@ -79,3 +80,41 @@ if __name__ == '__main__':
     adata.uns["points"] = mol_filtered 
 
     adata.write_h5ad(f'{output_path}/adata_{suffix}.h5ad')
+
+
+
+    # # 1. 生成基于 Pandas 的计数表 (保持原有逻辑)
+    # total_counts = mol_filtered.groupby(['cell_barcode', 'gene']).size().unstack(fill_value=0)
+
+    # rb_filtered = mol_filtered[mol_filtered['feature_name'].str.endswith('_rbRNA')]
+    # nt_filtered = mol_filtered[mol_filtered['feature_name'].str.endswith('_ntRNA')]
+    # rb_counts = rb_filtered.groupby(['cell_barcode', 'gene']).size().unstack(fill_value=0)
+    # nt_counts = nt_filtered.groupby(['cell_barcode', 'gene']).size().unstack(fill_value=0)
+
+    # # 2. 维度对齐
+    # rb_counts = rb_counts.reindex(index=total_counts.index, columns=total_counts.columns, fill_value=0)
+    # nt_counts = nt_counts.reindex(index=total_counts.index, columns=total_counts.columns, fill_value=0)
+
+    # # ==========================================
+    # # 3. 核心修改区：生成稀疏矩阵 (Sparse) 与类型降级 (int32)
+    # # ==========================================
+    # # 将 Pandas 提取出来的稠密数组 .values 包装为 CSR 稀疏矩阵，并指定类型
+    # X_sparse  = sp.csr_matrix(total_counts.values, dtype='int32')
+    # rb_sparse = sp.csr_matrix(rb_counts.values, dtype='int32')
+    # nt_sparse = sp.csr_matrix(nt_counts.values, dtype='int32')
+
+    # # 4. 构建 AnnData
+    # adata = ad.AnnData(X=X_sparse)
+    # adata.obs_names = total_counts.index.astype(str)
+    # adata.var_names = total_counts.columns.astype(str)
+
+    # adata.layers['rbRNA'] = rb_sparse
+    # adata.layers['ntRNA'] = nt_sparse
+    # adata.uns["points"] = mol_filtered 
+
+    # # ==========================================
+    # # 5. 开启压缩保存
+    # # ==========================================
+    # print(f"Saving AnnData (Sparse int32) to h5ad...")
+    # adata.write_h5ad(f'{output_path}/adata_{suffix}.h5ad', compression='gzip')
+    # print("✅ 保存完成！")

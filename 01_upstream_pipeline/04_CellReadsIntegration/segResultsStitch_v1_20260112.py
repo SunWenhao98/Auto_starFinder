@@ -12,20 +12,45 @@ import argparse
 warnings.filterwarnings("ignore")
 
 
-def get_coords(path):
-      f = open(path) 
-      line = f.readline()
-      list = []
-      while line:
-            if line.startswith('Position'):
-                  a = np.array(line.replace('Position','').replace('.tif; ; (',',').replace(', ',',').replace(')\n','').split(','))
-                  a = [float(x) for x in a] # Remove rounding for raw coordinates
+# def get_coords(path):
+#       f = open(path) 
+#       line = f.readline()
+#       list = []
+#       while line:
+#             if line.strip().startswith("Position"):
+#                   a = np.array(line.replace('Position','').replace('.tif; ; (',',').replace(', ',',').replace(')\n','').split(','))
+#                   a = [float(x) for x in a] # Remove rounding for raw coordinates
                   
-                  list.append(a)
-            line = f.readline()
-      coords_df = np.array(list)
-      f.close
-      return coords_df[:, 0:3]
+#                   list.append(a)
+#             line = f.readline()
+#       coords_df = np.array(list)
+#       f.close
+#       return coords_df[:, 0:3]
+
+def get_coords(path):
+    coords = []
+
+    with open(path, "r", encoding="utf-8-sig") as f:
+        for line in f:
+            line = line.strip()
+
+            if line.startswith("Position"):
+                a = line.replace("Position", "") \
+                        .replace(".tif; ; (", ",") \
+                        .replace(", ", ",") \
+                        .replace(")", "") \
+                        .split(",")
+
+                a = [float(x) for x in a]
+                coords.append(a)
+
+    if len(coords) == 0:
+        raise ValueError(f"No Position lines found in file: {path}")
+
+    coords_df = np.array(coords)
+
+    # 第 0 列是 position index，第 1 列是 x，第 2 列是 y
+    return coords_df[:, 0:3]
 
 def get_grid_order(Tile_summary_file, tolerance=300):
     """

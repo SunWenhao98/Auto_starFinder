@@ -268,30 +268,30 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
         disp(strcat("current datatype of images matrix in mat:", class(sdata.rawImages)));
 
         % Save raw input images for each round
-        for r = 1:size(sdata.rawImages, 5) % 遍历每个 round
-            % if ismember(r, [1, 5, 7, 9])  % 只保存特定轮次
+        % for r = 1:size(sdata.rawImages, 5) % 遍历每个 round
+        %     % if ismember(r, [1, 5, 7, 9])  % 只保存特定轮次
 
-            for c = 1:size(sdata.rawImages, 4) % 遍历每个 channel
-                rawNorm_img_name = fullfile(interm_output_dir, ...
-                    strcat(p.Results.tile, "_rawNorm_round_", num2str(r), "_channel_", num2str(c), ".tif"));
+        %     for c = 1:size(sdata.rawImages, 4) % 遍历每个 channel
+        %         rawNorm_img_name = fullfile(interm_output_dir, ...
+        %             strcat(p.Results.tile, "_rawNorm_round_", num2str(r), "_channel_", num2str(c), ".tif"));
         
-                if exist(rawNorm_img_name, 'file') == 2
-                    delete(rawNorm_img_name);
-                end
+        %         if exist(rawNorm_img_name, 'file') == 2
+        %             delete(rawNorm_img_name);
+        %         end
         
-                for j = 1:size(sdata.rawImages, 3) % 遍历每个 z-slice
-                    img_slice = squeeze(sdata.rawImages(:, :, j, c, r)); % 获取单个 z-slice
-                    if j == 1
-                        imwrite(img_slice, rawNorm_img_name, 'WriteMode', 'overwrite');
-                    else
-                        imwrite(img_slice, rawNorm_img_name, 'WriteMode', 'append');
-                    end
-                end
+        %         for j = 1:size(sdata.rawImages, 3) % 遍历每个 z-slice
+        %             img_slice = squeeze(sdata.rawImages(:, :, j, c, r)); % 获取单个 z-slice
+        %             if j == 1
+        %                 imwrite(img_slice, rawNorm_img_name, 'WriteMode', 'overwrite');
+        %             else
+        %                 imwrite(img_slice, rawNorm_img_name, 'WriteMode', 'append');
+        %             end
+        %         end
         
-                disp(strcat("Wrote ", rawNorm_img_name, " to file"));
-            end
-            % end
-        end
+        %         disp(strcat("Wrote ", rawNorm_img_name, " to file"));
+        %     end
+        %     % end
+        % end
 
         if p.Results.hist_round > 0
             sdata = sdata.HistEqualize('Method', "inter_round", 'hist_round', p.Results.hist_round);
@@ -342,12 +342,12 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
             disp('No morphological reconstruction performed.')
         end
 
-        % Save rawImages as a complete mat file
-        rawImages_mat_file = fullfile(curr_out_path, strcat('rawPreprocessed_image.mat'));
-        full_image = sdata.rawImages;
-        % save(rawImages_mat_file, 'rawImages');
-        save(rawImages_mat_file, 'full_image', '-v7.3');
-        disp(strcat("raw images saved as mat file: ", rawImages_mat_file));
+        % % Save rawImages as a complete mat file
+        % rawImages_mat_file = fullfile(curr_out_path, strcat('rawPreprocessed_image.mat'));
+        % full_image = sdata.rawImages;
+        % % save(rawImages_mat_file, 'rawImages');
+        % save(rawImages_mat_file, 'full_image', '-v7.3');
+        % disp(strcat("raw images saved as mat file: ", rawImages_mat_file));
         
         % %% Save raw input images for each round
         % for r = 1:size(sdata.rawImages, 5) % 遍历每个 round
@@ -515,7 +515,15 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
             disp('Global registration and subtile splitting done!!!')
         
         elseif p.Results.global_registration_mode == 0
-            sdata.registeredImages = sdata.rawImages;
+            % sdata.registeredImages = sdata.rawImages;
+
+            % Save rawImages as a complete mat file
+            rawImages_mat_file = fullfile(curr_out_path, strcat('rawPreprocessed_image.mat'));
+            full_image = sdata.rawImages;
+            % save(rawImages_mat_file, 'rawImages');
+            save(rawImages_mat_file, 'full_image', '-v7.3');
+            disp(strcat("raw images saved as mat file: ", rawImages_mat_file));
+
             disp('No global registration performed and the registered images are the same as the raw images.');
         end
 
