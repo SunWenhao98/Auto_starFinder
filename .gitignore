@@ -16,5 +16,6 @@
 __pycache__
 
 # 忽略特定文件夹
-01_upstream_pipeline/00_utils/
+01_upstream_pipeline/00_utils/90_cluMap_res
+01_upstream_pipeline/00_utils/zz_dumped
 02_downstream_pipeline/
