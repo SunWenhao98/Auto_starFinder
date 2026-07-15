@@ -94,8 +94,27 @@ if [[ "$index" -lt 0 || "$index" -ge ${#positions[@]} ]]; then
 fi
 
 POSITION_NAME=$(basename "${positions[$index]}")
+# 定义转录本文件路径（根据 raw_csv 推导）
+transcripts_file_clean="${raw_csv%.*}_clean_genes.csv"
 
-REAL_SEGOUT_DIR=$(ls -d ${DATA_DIR}/${POSITION_NAME}/seg/clustermap* | head -n 1)
+# 在 seg/ 下查找包含该文件的 clustermap 目录
+REAL_SEGOUT_DIR=""
+for candidate_dir in "${DATA_DIR}/${POSITION_NAME}/seg"/clustermap*/; do
+    if [ -d "$candidate_dir" ] && [ -f "${candidate_dir}${transcripts_file_clean##*/}" ]; then
+        REAL_SEGOUT_DIR="$candidate_dir"
+        break
+    fi
+done
+
+# 检查是否找到
+if [ -z "$REAL_SEGOUT_DIR" ]; then
+    echo "ERROR: No clustermap directory containing ${transcripts_file_clean##*/} found under ${DATA_DIR}/${POSITION_NAME}/seg/"
+    exit 1
+fi
+
+echo "Found clustermap directory: $REAL_SEGOUT_DIR"
+
+# REAL_SEGOUT_DIR=$(ls -d ${DATA_DIR}/${POSITION_NAME}/seg/clustermap* | head -n 1)
 raw_csv="${DATA_DIR}/${POSITION_NAME}/${raw_csv}"
 remained_csv="${REAL_SEGOUT_DIR}/${remained_csv}"
 output_csv="${REAL_SEGOUT_DIR}/${output_csv}"

@@ -120,20 +120,28 @@ function [geneToSeq, seqToGene] = new_LoadCodebook_tri(inputPath, remove_index, 
         end
     end
     
-    % --- Debug Output: Formatted Display (Modified) ---
+% --- Debug Output: Formatted Display ---
     fprintf('\n%30s | %30s\n', 'Gene Name', 'Barcode');
-    fprintf('%s\n', repmat('-', 1, 65)); % 打印分割线
+    fprintf('%s\n', repmat('-', 1, 65)); % 分割线
     
-    for i = 1:size(f, 1)
-        % 转换为 char 类型以确保 fprintf 兼容性
+    % 只打印前10行
+    maxRows = min(size(f, 1), 10);
+    for i = 1:maxRows
+        % 将 string 转为 char 以确保 fprintf 兼容性，设置宽度30，右对齐
         gName = char(f(i, 1));
         gCode = char(f(i, 2));
-        % %30s 表示占用30字符宽度，默认左侧补空格(即右对齐)
         fprintf('%30s   %30s\n', gName, gCode);
     end
+    
+    % 如果总行数超过10，显示省略提示
+    if size(f, 1) > 10
+        fprintf('%30s   %30s\n', '...', '...');
+        fprintf('(Showing first 10 of %d rows)\n', size(f, 1));
+    end
+    
     fprintf('-----------------------------------------------------------------\n');
-    % --------------------------------------------------
-
+    % ---------------------------------------
+    
     % Create the mappings
     seqToGene = containers.Map(f(:, 2), f(:, 1));
     geneToSeq = containers.Map(f(:, 1), f(:, 2));

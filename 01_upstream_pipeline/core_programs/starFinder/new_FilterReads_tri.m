@@ -15,12 +15,12 @@ function obj = new_FilterReads_tri( obj, endBases, showPlots, codeMap_mode )
     bases_back = new_DecodeCS(cs_back, endBases(3), codeMap_mode);
     bases_omics = new_DecodeCS_omic(cs_omics, endBases(1), codeMap_mode);
     
-    disp('bases_front:');
-    disp(bases_front);
-    disp('bases_back:');
-    disp(bases_back);
-    disp('bases_omics:');
-    disp(bases_omics);
+    % disp('bases_front:');
+    % disp(bases_front);
+    % disp('bases_back:');
+    % disp(bases_back);
+    % disp('bases_omics:');
+    % disp(bases_omics);
     
     % seqD 端点校验：GxxxxA
     for i=1:numel(bases_front)

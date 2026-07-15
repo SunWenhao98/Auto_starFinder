@@ -52,7 +52,7 @@ def get_coords(path):
     # 第 0 列是 position index，第 1 列是 x，第 2 列是 y
     return coords_df[:, 0:3]
 
-def get_grid_order(Tile_summary_file, tolerance=300):
+def get_grid_order(Tile_summary_file, tolerance=200):
     """
     将带有坐标偏离的Tile绝对像素坐标映射到逻辑网格坐标(第几行第几列)
     
@@ -263,6 +263,8 @@ def command_args():
 if __name__ == '__main__':
     args = command_args()
     alignment_thresh = 0.5
+    suffix = str(args.suffix).split('-')[0]
+    match_string = str(args.suffix).split('-')[1]
 
     # 1. 图像大小 img_c, img_r
     # 2. 输入路径：registered文件夹路径
@@ -279,17 +281,19 @@ if __name__ == '__main__':
     seg_method = args.seg_method
     IF_dirname = args.IF_dirname
     proj_name = input_regpath.split('/')[-2]
-    Tile_registered = f"{input_regpath}/{IF_dirname}/TileConfiguration.registered.txt"
+    Tile = f"{input_regpath}/{IF_dirname}/TileConfiguration.initial.txt"
+    Tile_registered = f"{input_regpath}/{IF_dirname}/TileConfiguration.Fiji.txt"
     Tile_Grid = f"{input_regpath}/{IF_dirname}/tile_summary.csv"
-    Tile = f"{input_regpath}/{IF_dirname}/TileConfiguration.txt"
+    
 
-    cell_center_path = f"{output_path}/cell_centers_{proj_name}_{seg_method}_{args.suffix}.csv"
-    remain_reads_path = f"{output_path}/remain_reads_{proj_name}_{seg_method}_{args.suffix}.csv"
+    cell_center_path = f"{output_path}/cell_centers_{proj_name}_{seg_method}_{suffix}.csv"
+    remain_reads_path = f"{output_path}/remain_reads_{proj_name}_{seg_method}_{suffix}.csv"
 
 #   坐标读取和元信息整合
-    obs_coords = get_coords(Tile_registered)        # 读取观察到的坐标
     exp_coords = get_coords(Tile)                   # 读取预期的坐标
+    obs_coords = get_coords(Tile_registered)        # 读取观察到的坐标
     grid_df = get_grid_order(Tile_Grid)             # 读取网格顺序
+    # tile 是真正有物理意义的 pos index
     coords_df = pd.DataFrame(obs_coords, columns=['tile','column_coord_obs','row_coord_obs'])
     coords_exp_df = pd.DataFrame(exp_coords, columns=['tile','column_coord_exp','row_coord_exp'])
 
@@ -423,26 +427,36 @@ if __name__ == '__main__':
 
 
 
-        # 1. 构造带有 * 号的搜索模式 (Search Pattern)
-        # 建议使用 os.path.join 来拼接路径，比直接用 + 拼接字符串更安全
-        search_pattern = os.path.join(input_regpath, f'Position{tile_order:03d}', 'seg', f'{seg_method}*')
-        
+        # 组装出 _clean_genes.csv 文件名
+        target_filename = f"{match_string}_clean_genes.csv"
+
         print(f"\nProcessing tile {tile_order}:")
+        print(f"Target filename: {target_filename}")
+
+        # 1. 构建搜索模式
+        search_pattern = os.path.join(input_regpath, f'Position{tile_order:03d}', 'seg', f'{seg_method}*')
+
         print(f"Searching pattern: {search_pattern}")
-        
-        # 2. 使用 glob 解析出真实的文件夹路径
+
+        # 2. 使用 glob 解析出所有匹配的文件夹
         matched_dirs = glob(search_pattern)
-        
-        # 检查是否匹配到了文件夹
-        if not matched_dirs:
-            print(f"- Tile {tile_order}: Seg directory not found. [{t_grid_c},{t_grid_r}]")
+
+        # 3. 过滤：找到包含 target_filename 的文件夹
+        dfpath = None
+        for candidate_dir in sorted(matched_dirs):  # 排序保证确定性
+            if os.path.isdir(candidate_dir):
+                candidate_file = os.path.join(candidate_dir, target_filename)
+                if os.path.isfile(candidate_file):
+                    dfpath = candidate_dir
+                    print(f"Found matching directory: {dfpath} (contains {target_filename})")
+                    break
+
+        # 4. 检查是否找到了匹配的文件夹
+        if dfpath is None:
+            print(f"- Tile {tile_order}: No directory containing '{target_filename}' found under seg/{seg_method}*. [{t_grid_c},{t_grid_r}]")
             continue
-            
-        # 3. 提取真实的路径 (通常取第一个匹配结果)
-        dfpath = matched_dirs[0]
-        print(f"Matched real path: {dfpath}")
-        
-        # 4. 拼接具体的文件路径
+
+        # 5. 拼接具体的文件路径
         reads_file = os.path.join(dfpath, 'remain_reads_assigned.csv')
         center_file = os.path.join(dfpath, 'cell_center.csv')
         
@@ -664,4 +678,4 @@ if __name__ == '__main__':
 
     plt.tight_layout()
 
-    plt.savefig(os.path.join(output_path, f'cell_reads_profile_{proj_name}_{seg_method}_{args.suffix}.png'))
+    plt.savefig(os.path.join(output_path, f'cell_reads_profile_{proj_name}_{seg_method}_{suffix}.png'))

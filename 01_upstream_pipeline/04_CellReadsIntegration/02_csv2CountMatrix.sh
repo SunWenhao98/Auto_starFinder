@@ -36,8 +36,6 @@ echo "Partition:       $SLURM_JOB_PARTITION"
 echo "============= CPU/Memory Allocation ============="
 echo "CPUs per task:   $SLURM_CPUS_PER_TASK"
 echo "Allocated CPUs:  $SLURM_JOB_CPUS_PER_NODE"
-
-echo "Tasks per node:  $SLURM_NTASKS_PER_NODE"
 echo "Total Tasks:     $SLURM_NTASKS"
 echo "Memory per node: $SLURM_MEM_PER_NODE MB"
 

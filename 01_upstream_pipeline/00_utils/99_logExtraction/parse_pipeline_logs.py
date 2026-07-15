@@ -84,6 +84,38 @@ CONFIGS = {
 }
 
 
+POSITION_RE = re.compile(r"选中的 Position 文件夹名称:\s*(Position\d+)")
+QC_RE = re.compile(r"([\d.]+) \[(\d+) / (\d+)\] percent of reads are below score thresh (?!.*of all valid spots).*")
+VALID_QC_RE = re.compile(r"([\d.]+) \[(\d+) / (\d+)\] percent of reads are below score thresh .* of all valid spots")
+INTENSITY_RE = re.compile(
+    r"([\d.]+) \[(\d+) / (\d+)\] percent of reads have intensity above [\d.eE+-]+ in Reference Round \(Round \d+\)"
+)
+SEQD_RE = re.compile(r"([\d.]+) \[(\d+) / \d+\] percent of reads match seqD barcode pattern")
+SEQF_RE = re.compile(r"([\d.]+) \[(\d+) / \d+\] percent of reads match seqF barcode pattern")
+SEQEND_RE = re.compile(r"([\d.]+) \[(\d+) / \d+\] percent of good reads match barcode pattern")
+STRICT_RE = re.compile(r"([\d.]+) \[(\d+) / \d+\] percent of good reads are in codebook")
+INTEGER_LINE_RE = re.compile(r"^\s*(\d+)\s*$")
+CROSSTALK_INLINE_RE = re.compile(r"Geting max color\.\.\.\s+(\d+)\s+Decoding\.\.\.")
+
+
+@dataclass
+class DecodingStats:
+    fov_name: str = ""
+    spots_found_total: int = 0
+    crosstalk_total: int = 0
+    qc_count_total: int = 0
+    valid_qc_count_total: int = 0
+    valid_spots_total: int = 0
+    intensity_qc_count: int = 0
+    intensity_qc_total_ratio: float = 0.0
+    seqd_singlecheck_count_total: int = 0
+    seqf_singlecheck_count_total: int = 0
+    seqd_singlecheck_prop_total: float = 0.0
+    seqf_singlecheck_prop_total: float = 0.0
+    seqend_count_total: int = 0
+    strictmatch_count_total: int = 0
+
+
 def natural_number_from_position(value: str) -> int:
     match = re.search(r"(\d+)$", value or "")
     return int(match.group(1)) if match else 10**12
@@ -179,6 +211,101 @@ def parse_decoding(text: str, submit_directory: str) -> list[dict[str, str]]:
     }]
 
 
+def parse_decoding_log_stream(path: Path, submit_directory: str) -> list[dict[str, str]]:
+    stats = DecodingStats()
+    expect_crosstalk_value = False
+    with path.open("r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            if not stats.fov_name:
+                match = POSITION_RE.search(line)
+                if match:
+                    stats.fov_name = match.group(1)
+                    continue
+
+            inline_crosstalk = CROSSTALK_INLINE_RE.search(line)
+            if inline_crosstalk:
+                stats.crosstalk_total = int(inline_crosstalk.group(1))
+                expect_crosstalk_value = False
+                continue
+
+            if "Geting max color" in line:
+                expect_crosstalk_value = True
+                continue
+            if expect_crosstalk_value:
+                match = INTEGER_LINE_RE.match(line)
+                if match:
+                    stats.crosstalk_total = int(match.group(1))
+                    expect_crosstalk_value = False
+                    continue
+                if "Decoding" in line:
+                    expect_crosstalk_value = False
+
+            match = QC_RE.search(line)
+            if match:
+                stats.qc_count_total = int(match.group(2))
+                stats.spots_found_total = int(match.group(3))
+                continue
+
+            match = VALID_QC_RE.search(line)
+            if match:
+                stats.valid_qc_count_total = int(match.group(2))
+                stats.valid_spots_total = int(match.group(3))
+                continue
+
+            match = INTENSITY_RE.search(line)
+            if match:
+                stats.intensity_qc_total_ratio = float(match.group(1))
+                stats.intensity_qc_count = int(match.group(2))
+                continue
+
+            match = SEQD_RE.search(line)
+            if match:
+                stats.seqd_singlecheck_prop_total = float(match.group(1))
+                stats.seqd_singlecheck_count_total = int(match.group(2))
+                continue
+
+            match = SEQF_RE.search(line)
+            if match:
+                stats.seqf_singlecheck_prop_total = float(match.group(1))
+                stats.seqf_singlecheck_count_total = int(match.group(2))
+                continue
+
+            match = SEQEND_RE.search(line)
+            if match:
+                stats.seqend_count_total = int(match.group(2))
+                continue
+
+            match = STRICT_RE.search(line)
+            if match:
+                stats.strictmatch_count_total = int(match.group(2))
+
+    if not stats.fov_name:
+        return []
+    return [{
+        "submit_directory": submit_directory,
+        "FOV_name": stats.fov_name,
+        "SpotsFound_Total": str(stats.spots_found_total),
+        "Crosstalk_Total": str(stats.crosstalk_total),
+        "Crosstalk_Ratio": ratio(stats.crosstalk_total, stats.spots_found_total),
+        "QCCount_Total": str(stats.qc_count_total),
+        "QCCount_Total_Ratio": ratio(stats.qc_count_total, stats.spots_found_total),
+        "ValidQCCount_Total": str(stats.valid_qc_count_total),
+        "ValidSpots_Total": str(stats.valid_spots_total),
+        "ValidQC_Total_Ratio": ratio(stats.valid_qc_count_total, stats.valid_spots_total),
+        "IntensityQC_Count": str(stats.intensity_qc_count),
+        "IntensityQC_Total_Ratio": str(stats.intensity_qc_total_ratio),
+        "SeqD_SingleCheck_Count_Total": str(stats.seqd_singlecheck_count_total),
+        "SeqF_SingleCheck_Count_Total": str(stats.seqf_singlecheck_count_total),
+        "SeqD_SingleCheck_Prop_Total": str(stats.seqd_singlecheck_prop_total),
+        "SeqF_SingleCheck_Prop_Total": str(stats.seqf_singlecheck_prop_total),
+        "seqEnd_Count_Total": str(stats.seqend_count_total),
+        "seqEnd_Total_Ratio": ratio(stats.seqend_count_total, stats.valid_spots_total),
+        "StrictMatch_Count_Total": str(stats.strictmatch_count_total),
+        "StrictMatch_Total_Ratio": ratio(stats.strictmatch_count_total, stats.valid_spots_total),
+        "StrictMatch_vs_seqEnd_Ratio": ratio(stats.strictmatch_count_total, stats.seqend_count_total),
+    }]
+
+
 def parse_global_spf(text: str, submit_directory: str) -> list[dict[str, str]]:
     fov = search(r"选中的 Position 文件夹名称:\s*(\S+)", text, "")
     if not fov:
@@ -268,9 +395,17 @@ def parse_batch(batch_root: Path, log_type: str) -> int:
             print(f"警告: {submit_dir.name} 缺少 {config.log_dir}，跳过。")
             continue
         rows: list[dict[str, str]] = []
-        for log_file in sorted(log_dir.glob("*.out"), key=log_task_id):
-            text = log_file.read_text(encoding="utf-8", errors="ignore")
-            rows.extend(parser(text, batch_root.name))
+        log_files = sorted(log_dir.glob("*.out"), key=log_task_id)
+        if log_type == "decoding":
+            print(f"解析: {submit_dir.name} ({len(log_files)} logs)", flush=True)
+            for index, log_file in enumerate(log_files, start=1):
+                rows.extend(parse_decoding_log_stream(log_file, batch_root.name))
+                if index % 25 == 0 or index == len(log_files):
+                    print(f"  {submit_dir.name}: {index}/{len(log_files)} logs", flush=True)
+        else:
+            for log_file in log_files:
+                text = log_file.read_text(encoding="utf-8", errors="ignore")
+                rows.extend(parser(text, batch_root.name))
         if log_type == "gr_shift":
             rows.sort(key=lambda row: (int(row.get("position_number") or 10**12), int(row.get("round_name", "Round0").replace("Round", "") or 0)))
         else:

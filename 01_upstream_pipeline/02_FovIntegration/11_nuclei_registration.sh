@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH -J IF_Registration
-#SBATCH -o logs_IF_registration/IF_registration_%A_%a.out  
-#SBATCH -e logs_IF_registration/IF_registration_%A_%a.err
+#SBATCH -J Nuclei_based_Registration
+#SBATCH -o logs_Nuclei_based_Registration/Nuclei_based_Registration_%A_%a.out  
+#SBATCH -e logs_Nuclei_based_Registration/Nuclei_based_Registration_%A_%a.err
 
 #SBATCH -p C64M512G
 #SBATCH -c 4
@@ -12,7 +12,7 @@
 module purge
 module load matlab/2023a
 
-mkdir -p logs_IF_registration
+mkdir -p logs_Nuclei_based_Registration
 start_time=$(date +%s)
 echo "Start time: $(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -62,13 +62,36 @@ round_num=${9:-6}
 
 input_format=${10:-"uint16"}
 norm_out_format=${11:-"uint8"}
-protein_outdir=${12:-"IF"}
+aligned_round_outdir=${12:-"IF"}
+moving_round=${13:-"IF"}
+channel_panel=${14:-"OlympusIF"}
+
+case "$channel_panel" in
+    LeicaIF)
+        channel_panel_matlab="{'561-CA9', '488-CD144', '647-CD31', 'DAPI'}"
+        ;;
+    OlympusIF)
+        channel_panel_matlab="{'488-CD144', '561-CA9', '647-CD31', 'DAPI'}"
+        ;;
+    LeicaSeqE)
+        channel_panel_matlab="{'647-GCnt', '561-GTrb', 'Padlayer', 'DAPI'}"
+        ;;
+    *)
+        echo "Error: Unsupported channel_panel: $channel_panel" >&2
+        echo "Supported modes: LeicaIF, OlympusIF, LeicaSeqE" >&2
+        exit 1
+        ;;
+esac
 
 
 echo "[INFO] PROJECT_ROOT: $PROJECT_ROOT"
 echo "[INFO] PROJECT_NAME: $PROJECT_NAME"
 echo "[INFO] registration_folder: $registration_folder"
+echo "[INFO] aligned_round_outdir: $aligned_round_outdir"
 echo "[INFO] reference round: $ref_round"
+echo "[INFO] moving_round: $moving_round"
+echo "[INFO] channel_panel: $channel_panel"
+echo "[INFO] channel_panel MATLAB: $channel_panel_matlab"
 
 
 TASK_ID=$(( SLURM_ARRAY_TASK_ID + OFFSET ))
@@ -102,10 +125,9 @@ echo "------------------- start processing ..."
 matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'nuclei_protein_registration', '$POSITION_NAME', \
     $image_width, $image_depth, $ref_round, $channel_num, $round_num, \
     '$PROJECT_ROOT', '01_data', '$registration_folder', 'log', \
-    'protein_round', 'IF', 'protein_outdir', '$protein_outdir', \
+    'moving_round', '$moving_round', 'aligned_round_outdir', '$aligned_round_outdir', \
     'input_format', '$input_format', 'norm_out_format', '$norm_out_format', \
-    'protein_stains', {'488-CD144', '561-CA9', '647-CD31', 'DAPI'})"
-# 根据实际情况修改数据采集时所使用的染料
+    'channel_panel', $channel_panel_matlab)"
 
 
 end_time=$(date +%s)

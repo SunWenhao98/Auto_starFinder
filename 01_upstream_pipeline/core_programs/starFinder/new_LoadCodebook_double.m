@@ -53,7 +53,7 @@ function [geneToSeq, seqToGene] = new_LoadCodebook_tri(inputPath, remove_index, 
         end
     end
     
-    disp(f(:, 2));
+    % disp(f(:, 2));
     % Create the mappings
     seqToGene = containers.Map(f(:, 2), f(:, 1));
     geneToSeq = containers.Map(f(:, 1), f(:, 2));

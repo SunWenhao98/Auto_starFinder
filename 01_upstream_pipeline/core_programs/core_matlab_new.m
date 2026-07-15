@@ -46,10 +46,9 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
     defaultMethod = "";
     defaultintensityThreshold = 0.2;
     defaultqScoreThers = 0;
-    defaultproteinRound = "";
-    defaultproteinStains = [];
-    % protein_outdir
-    defaultprotein_outdir = "IF";
+    defaultmovingRound = "";
+    defaultchannelPanel = [];
+    defaultalignedRoundOutdir = "IF";
 
     % defaultinput_format = "uint8";
     % defaultnorm_outformat = "uint8";
@@ -91,9 +90,9 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
     addParameter(p, 'spotfinding_method', defaultMethod);
     addParameter(p, 'intensity_threshold', defaultintensityThreshold);
     % addParameter(p, 'q_score_thers', defaultqScoreThers);
-    addParameter(p, 'protein_round', defaultproteinRound);
-    addParameter(p, 'protein_stains', defaultproteinStains);
-    addParameter(p, 'protein_outdir', defaultprotein_outdir);
+    addParameter(p, 'moving_round', defaultmovingRound);
+    addParameter(p, 'channel_panel', defaultchannelPanel);
+    addParameter(p, 'aligned_round_outdir', defaultalignedRoundOutdir);
     
     addParameter(p, 'input_format', defaultinput_format);
     addParameter(p, 'norm_out_format', defaultnorm_outformat);
@@ -757,9 +756,9 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
                 if size(sdata_t.allSpots,1) > 0
                     allSpots_t = [table(sdata_t.allSpots(:,1), sdata_t.allSpots(:,2), sdata_t.allSpots(:,3), ...
                                         sdata_t.allSpots(:,4), sdata_t.allSpots(:,5), sdata_t.allSpots(:,6), ...
-                                        'VariableNames',{'x','y','z','intensity', 'addition', 'channel'})]
+                                        'VariableNames',{'x','y','z','intensity', 'addition', 'channel'})];
                 else
-                    allSpots_t = table([],[],[],[],[],'VariableNames',{'x','y','z','intensity', 'addition', 'channel'});
+                    allSpots_t = table([],[],[],[],[],[],'VariableNames',{'x','y','z','intensity', 'addition', 'channel'});
                 end
         
                 writetable(allSpots_t, fullfile(curr_out_path, strcat('allSpots_', p.Results.spotfinding_method, '_', num2str(p.Results.intensity_threshold), '.csv')),'Delimiter',',','QuoteStrings',false);
@@ -1014,13 +1013,24 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
         %gpuDevice(2)
 
         % initialize
-        sdata = new_STARMapDataset_zf(input_path, output_path, 'useGPU', false);
-        sdata.log = fopen(fullfile(curr_out_path_log, 'log_protein_registration.txt'), 'w');
-        sub_dirs = string(p.Results.protein_stains);
-        fprintf(sdata.log, 'log_protein_registration:\n');
-        fprintf(sdata.log, 'protein_stains: %s\n', sub_dirs);
+        aligned_round_outdir = string(p.Results.aligned_round_outdir);
+        if strlength(strtrim(aligned_round_outdir)) == 0
+            error('aligned_round_outdir is required for nuclei_protein_registration.');
+        end
+        registration_target_tag = regexprep(char(aligned_round_outdir), '[^A-Za-z0-9_.-]', '_');
+        registration_log_file = fullfile(curr_out_path_log, sprintf('log_protein_registration_%s.txt', registration_target_tag));
 
-        % perform DAPI-based registration of amplicon signal and protein rounds 
+        sdata = new_STARMapDataset_zf(input_path, output_path, 'useGPU', false);
+        sdata.log = fopen(registration_log_file, 'w');
+        sub_dirs = string(p.Results.channel_panel);
+        fprintf(sdata.log, 'log_protein_registration:\n');
+        fprintf(sdata.log, 'moving_round: %s\n', string(p.Results.moving_round));
+        fprintf(sdata.log, 'aligned_round_outdir: %s\n', aligned_round_outdir);
+        fprintf(sdata.log, 'channel_panel: %s\n', sub_dirs);
+        fprintf(sdata.log, 'registration_target_tag: %s\n', registration_target_tag);
+        fprintf(sdata.log, 'registration_log_file: %s\n', registration_log_file);
+
+        % perform DAPI-based registration of amplicon signal and protein rounds
         % output_format = p.Results.norm_out_format;
         num_stains = length(sub_dirs);
         if num_stains < 4
@@ -1028,19 +1038,19 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
         else
             dapi_channel = 4;       % during convert of vsi format, dapi would be changed to the 4th channel
         end
-        
+
         reference_round = sprintf('round%03d', p.Results.ref_round);
-        sdata = sdata.NucleiRegistrationProtein(p.Results.protein_round, reference_round, p.Results.tile, dapi_channel, ...
+        sdata = sdata.NucleiRegistrationProtein(p.Results.moving_round, reference_round, p.Results.tile, dapi_channel, ...
                                                 p.Results.input_format, p.Results.norm_out_format);
 
         % create a specalized path to save cell images;
-        protein_output_dir = fullfile(output_path, p.Results.protein_outdir);
+        protein_output_dir = fullfile(output_path, p.Results.aligned_round_outdir);
         if ~exist(protein_output_dir, 'dir')
             mkdir(protein_output_dir);
         end
-        
+
         sub_dirs(end+1) = "ref-DAPI";
-        % sub_dirs(end+1) = "ref-DAPI_MIP" 
+        % sub_dirs(end+1) = "ref-DAPI_MIP"
         SaveCellImg(protein_output_dir, sdata.proteinImages, p.Results.tile, sub_dirs);
         % 1. 输出目录
         % 2. 配准图像
@@ -1048,12 +1058,10 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
         % 4. 蛋白质标记物
         fprintf(sdata.log, 'protein images saved.\n');
         fclose(sdata.log);
+        fprintf('Protein registration log saved: %s\n', registration_log_file);
         fprintf('Nuclei-protein registration is done!\n');
-        
+
     end
-
-
-
     %% 2025-09-14: global spot Finding
     if strcmp(p.Results.mode, 'global_spot_finding')
 

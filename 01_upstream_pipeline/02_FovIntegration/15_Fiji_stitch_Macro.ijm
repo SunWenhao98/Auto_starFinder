@@ -97,15 +97,15 @@ if (stitchPattern == "Snake_row_Right_down") {
             "compute_overlap " +
             "subpixel_accuracy " +
             "computation_parameters=[Save memory (but be slower)] " +
-            "image_output=[Write to disk] " +
+            "image_output=[Fuse and display] " +
             "output_directory=" + inputDir + " ";
 
     run("Grid/Collection stitching", params);
 
-    // // 以获得 TileConfiguration.registered.txt 为运行目标
+    // 以获得 TileConfiguration.registered.txt 为运行目标
     // saveAs("Tiff", inputDir + "/" + outputName + "_3dnew.tif");
-    // run("Z Project...", "projection=[Max Intensity]");
-    // saveAs("Tiff", inputDir + "/" + outputName + "_2dnew.tif");
+    run("Z Project...", "projection=[Max Intensity]");
+    saveAs("Tiff", inputDir + "/" + outputName + "_2dnew.tif");
     print("Finished Grid/Collection stitching.");
     close();
     close();
@@ -216,7 +216,7 @@ if (stitchPattern == "Snake_row_Right_down") {
     close();
     close();
 
-} else if (stitchPattern == "Positions_from_file_MIP") {
+} else if (stitchPattern == "Positions_from_file_mosaic") {
     stitchType = "Positions from file";
     stitchOrder = "Defined by TileConfiguration";
 

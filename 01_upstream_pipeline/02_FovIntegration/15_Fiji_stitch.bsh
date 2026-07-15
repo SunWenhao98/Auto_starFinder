@@ -2,7 +2,7 @@
 // export INPUT_DIR GRID_X GRID_Y OUTPUT_NAME STITCH_PATTERN SCRIPT_DIR
 
 print("==============================================================");
-print("Starting FovIntegration/12_IF2_stitch.bsh script...");
+print("Starting FovIntegration/15_Fiji_stitch.bsh script...");
 String INPUT_DIR = System.getenv("INPUT_DIR");
 String GRID_X = System.getenv("GRID_X");
 String GRID_Y = System.getenv("GRID_Y");
@@ -31,7 +31,7 @@ import ij.IJ;
 import java.io.File;
 
 // Build macro path
-String macroPath = SCRIPT_DIR + "/12_IF3_Macro.ijm";
+String macroPath = SCRIPT_DIR + "/15_Fiji_stitch_Macro.ijm";
 
 // Validate macro file exists
 File macroFile = new File(macroPath);

@@ -42,21 +42,33 @@ source /gpfs/share/home/${USER}/anaconda3/etc/profile.d/conda.sh
 conda activate bioformats_env
 
 # 输入参数
-INPUT_DIR=$1
-OUTPUT_DIR=$2
-MATCH_STRING=$3
+PROJECT_ROOT=$1
+PROJECT_NAME=$2
+REG_DIR_SUFFIX=$3
+STITCHING_WORKDIR=$4
+SOURCE_CHANNEL_DIR=$5
+MATCH_STRING=$6
 
-pixel_size_um=$4
-image_xy=$5
-overlap_ratio=$6
-INVERT_Y_FLAG=${7:-""}      # --invert_y
+pixel_size_um=$7
+image_xy=$8
+overlap_ratio=$9
+INVERT_Y_FLAG=${10:-""}      # --invert_y
 
-maf_file=$8
-position_offset=$9
-microscope=${10:-"Leica"}
+maf_file=${11:-""}
+position_offset=${12:-0}
+microscope=${13:-"Leica"}
 
-echo "Input directory: $INPUT_DIR"
-echo "Output directory: $OUTPUT_DIR"
+WORK_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/${REG_DIR_SUFFIX}/${STITCHING_WORKDIR}"
+INPUT_DIR="${WORK_DIR}/${SOURCE_CHANNEL_DIR}"
+OUTPUT_DIR="${WORK_DIR}"
+
+echo "Project root: $PROJECT_ROOT"
+echo "Project name: $PROJECT_NAME"
+echo "Registration dir suffix: $REG_DIR_SUFFIX"
+echo "Stitching workdir: $STITCHING_WORKDIR"
+echo "Source channel dir: $SOURCE_CHANNEL_DIR"
+echo "Derived input directory: $INPUT_DIR"
+echo "Derived output directory: $OUTPUT_DIR"
 echo "Match string: $MATCH_STRING"
 echo "Pixel size (um): $pixel_size_um"
 echo "Image XY: $image_xy"
@@ -83,7 +95,7 @@ Start_time=$(date +%s)
 case "$microscope" in
     "Leica")
         echo "Running Leica stitching configuration..."
-        python -u "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/22_leica2Stitching_configuration.py" \
+        python -u "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/p12_leica2Stitching_configuration.py" \
             --input_dir "$INPUT_DIR" \
             --output_dir "$OUTPUT_DIR" \
             --match_string "$MATCH_STRING" \
@@ -97,7 +109,7 @@ case "$microscope" in
         ;;
     "Olympus")
         echo "Running Olympus stitching configuration..."
-        python -u "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/21_vsi2Stitching_configuration_v2.py" \
+        python -u "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/p12_vsi2Stitching_configuration.py" \
             --input_dir "$INPUT_DIR" \
             --output_dir "$OUTPUT_DIR" \
             --match_string "$MATCH_STRING" \
@@ -111,6 +123,8 @@ case "$microscope" in
         exit 1
         ;;
 esac
+
+cp "${WORK_DIR}/TileConfiguration.txt" "${WORK_DIR}/TileConfiguration.initial.txt"
 
 echo "Done!"
 echo "End time: $(date +%Y-%m-%d_%H:%M:%S)"

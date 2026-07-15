@@ -14,12 +14,12 @@ function obj = new_FilterReads_tri( obj, endBases, showPlots )
     bases_back = new_DecodeCS(cs_back, endBases(3));
     bases_omics = new_DecodeCS_omic(cs_omics, endBases(1));
     
-    disp('bases_front:');
-    disp(bases_front);
-    disp('bases_back:');
-    disp(bases_back);
-    disp('bases_omics:');
-    disp(bases_omics);
+    % disp('bases_front:');
+    % disp(bases_front);
+    % disp('bases_back:');
+    % disp(bases_back);
+    % disp('bases_omics:');
+    % disp(bases_omics);
     
     for i=1:numel(bases_front)
         currSeq = bases_front{i};

@@ -16,8 +16,8 @@ function obj = new_FilterReads( obj, endBases, showPlots, codeMap_mode )
 
     % older code for filtering reads in sequence space
     bases = new_DecodeCS(filtBases, endBases(1), codeMap_mode);
-    disp('bases:');
-    disp(bases);
+    % disp('bases:');
+    % disp(bases);
 
     % seqD 端点校验：GxxxxA
     for i=1:numel(bases)

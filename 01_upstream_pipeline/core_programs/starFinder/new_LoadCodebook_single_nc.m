@@ -38,16 +38,25 @@ function [ geneToSeq, seqToGene ] = new_LoadCodebook_single_nc( inputPath, remov
         f(:,2) = front + back;
     end
     
-    % --- Debug Output: Formatted Display ---
+% --- Debug Output: Formatted Display ---
     fprintf('\n%30s | %30s\n', 'Gene Name', 'Barcode');
     fprintf('%s\n', repmat('-', 1, 65)); % 分割线
     
-    for i = 1:size(f, 1)
+    % 只打印前10行
+    maxRows = min(size(f, 1), 10);
+    for i = 1:maxRows
         % 将 string 转为 char 以确保 fprintf 兼容性，设置宽度30，右对齐
         gName = char(f(i, 1));
         gCode = char(f(i, 2));
         fprintf('%30s   %30s\n', gName, gCode);
     end
+    
+    % 如果总行数超过10，显示省略提示
+    if size(f, 1) > 10
+        fprintf('%30s   %30s\n', '...', '...');
+        fprintf('(Showing first 10 of %d rows)\n', size(f, 1));
+    end
+    
     fprintf('-----------------------------------------------------------------\n');
     % ---------------------------------------
     

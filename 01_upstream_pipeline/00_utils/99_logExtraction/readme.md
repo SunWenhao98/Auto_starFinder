@@ -1,12 +1,3 @@
-mkdir -p zz_decoding
-cd zz_decoding
-python /gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/99_logExtraction/01_parse_globalDecoding_results.py --dir /gpfs/share/home/2401111558/01_project/08_projGBM/02_Process/03_starFinder/20260428_submit001_GBM0407_DecodeNormal
-
-mkdir ../zz_summarydata
-cd ../zz_summarydata
-python /gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/99_logExtraction/02_summary_decoding.py --dir /gpfs/share/home/2401111558/01_project/08_projGBM/02_Process/03_starFinder/20260428_submit001_GBM0407_DecodeNormal
-
-
 ## 统一日志提取与汇总工具（新增）
 
 新增两个主工具：

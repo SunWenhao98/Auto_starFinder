@@ -19,3 +19,6 @@ __pycache__
 01_upstream_pipeline/00_utils/90_cluMap_res
 01_upstream_pipeline/00_utils/zz_dumped
 02_downstream_pipeline/
+.omo/
+01_upstream_pipeline/zz_dumped
+01_upstream_pipeline/tests

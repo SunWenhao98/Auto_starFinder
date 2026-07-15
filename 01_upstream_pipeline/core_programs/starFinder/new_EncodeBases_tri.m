@@ -12,7 +12,8 @@ function colorSeq = new_EncodeBases_tri( seq, codeMap_mode )
              2,3,1};
         coding = containers.Map(k,v);
 
-        final_k = {'GT','GC'};
+        % final_k = {'GT','GC'};
+        final_k = {'GC', 'GT'};
         final_v = {1,2};
         final_coding = containers.Map(final_k, final_v);
 
@@ -26,7 +27,8 @@ function colorSeq = new_EncodeBases_tri( seq, codeMap_mode )
              3,3,3};
         coding = containers.Map(k,v);
 
-        final_k = {'GC', 'GT'};
+        % final_k = {'GC', 'GT'};
+        final_k = {'GT','GC'};
         final_v = {1,2};
         final_coding = containers.Map(final_k, final_v);
 

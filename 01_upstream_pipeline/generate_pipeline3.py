@@ -2,6 +2,28 @@ import configparser
 import sys
 import math
 
+
+def build_array_spec(tasks, parallel_tasks):
+    return f"1-{tasks}%{parallel_tasks}"
+
+
+def build_array_option(array_range, parallel_tasks):
+    return f"--array={array_range}%{parallel_tasks}"
+
+
+def split_csv_value(value):
+    return [item.strip() for item in str(value).split(',') if item.strip()]
+
+
+def file_stem(value):
+    name = str(value).rstrip('/').split('/')[-1]
+    return name.rsplit('.', 1)[0]
+
+
+def config_bool_string(section, key, fallback=False):
+    return 'true' if section.getboolean(key, fallback=fallback) else 'false'
+
+
 def generate_shell_script(config_file):
     
     config = configparser.ConfigParser(
@@ -26,6 +48,11 @@ def generate_shell_script(config_file):
         print(f"Error: No [JOB_...] sections found in {config_file}", file=sys.stderr)
         sys.exit(1)
 
+    enable_job_array_dependency = config['DEFAULT'].getboolean(
+        'enable_jobArray_dependency', fallback=False
+    )
+    previous_section_dependency_str = ""
+
     # 遍历所有 Job
     for i, section_name in enumerate(job_sections):
         job_counter = i + 1
@@ -38,7 +65,10 @@ def generate_shell_script(config_file):
         JOB_OUT_VAR = f"{job_prefix}_OUTPUT"
         
         # --- 关键: 动态依赖链 ---
-        dependency_str = ""
+        # enable_jobArray_dependency=true makes the first submitted step in this
+        # section wait for the previous section's final step. The default false
+        # keeps different samples/conditions as independent job chains.
+        dependency_str = previous_section_dependency_str if enable_job_array_dependency else ""
 
         try:
             # --- 1. 定义目录和名称 ---
@@ -72,7 +102,7 @@ def generate_shell_script(config_file):
             )
 
             # Spot Finding 参数 (基础，无array)
-            spf_array = f"1-{p['spf_array_tasks']}%%{p['spf_parallel_tasks']}"
+            spf_array = build_array_spec(p['spf_array_tasks'], p['spf_parallel_tasks'])
             spf_args_base = (
                 f"{spf_input_round_dir} \\\n"
                 f"{spf_reg_dir} \\\n"
@@ -91,7 +121,7 @@ def generate_shell_script(config_file):
             sd_output_dir = f"{p['project_root']}/{p['project_name']}/01_data"
             sd_temp_dir = f"{p['project_root']}/{p['project_name']}/zz_TEMP"
             filelist_path = f"{spd_work_dir}/filelist.txt"
-            sd_array = f"1-{p['sd_array_tasks']}%%{p['sd_parallel_tasks']}"
+            sd_array = build_array_spec(p['sd_array_tasks'], p['sd_parallel_tasks'])
             sd_args_base = (
                 f"{sd_input_dir} \\\n"
                 f"{sd_output_dir} \\\n"
@@ -114,7 +144,7 @@ def generate_shell_script(config_file):
 #               gr_norm_out_format = uint8
             # --- 3. 构建所有命令的 *参数* 部分 ---
             
-            gr_array = f"1-{p['gr_array_tasks']}%%{p['gr_parallel_tasks']}"
+            gr_array = build_array_spec(p['gr_array_tasks'], p['gr_parallel_tasks'])
             gr_args = (
                 f"{p['project_root']} \\\n"
                 f"{p['project_name']} {reg_dir_suffix} {p['gr_norm_mode']} {p['gr_percen_max']} "
@@ -125,19 +155,19 @@ def generate_shell_script(config_file):
             
             # --- 【关键修正 1/3】 ---
             # 定义 LR 的 *基础* 参数，不包含 offset
-            lr_array = f"1-{p['lr_array_tasks']}%%{p['lr_parallel_tasks']}"
+            lr_array = build_array_spec(p['lr_array_tasks'], p['lr_parallel_tasks'])
             lr_args_base = (
                 f"{p['project_root']} \\\n"
                 f"{p['project_name']} {reg_dir_suffix} {p['lr_align_basis']} {image_geom_args}"
             )
 
-            ls_array = f"1-{p['ls_array_tasks']}%%{p['ls_parallel_tasks']}"
+            ls_array = build_array_spec(p['ls_array_tasks'], p['ls_parallel_tasks'])
             ls_args = (
                 f"{p['project_root']} \\\n"
                 f"{p['project_name']} {reg_dir_suffix} {image_geom_args} {p['ls_offset']}"
             )
             
-            gd_array = f"1-{p['gd_array_tasks']}%%{p['gd_parallel_tasks']}"
+            gd_array = build_array_spec(p['gd_array_tasks'], p['gd_parallel_tasks'])
             voxel_size = f"[{p['gd_voxelsize']}]"
             # print(voxel_size)
             gd_args = (
@@ -145,57 +175,185 @@ def generate_shell_script(config_file):
                 f"{p['project_name']} {reg_dir_suffix} {image_geom_args} {p['gd_intensity_threshold']} {p['gd_spotfinding_method']} "
                 f"{p['gd_decoding_mode']} {p['gd_codeMap_mode']} {p['gd_loading_mode']} {p['gd_intensityThresh_PR']} {voxel_size} {p['gd_decoding_rounds']} {p['gd_offset']}"
             )
+
+            egc_target_file = p.get('egc_target_file', fallback='goodPoints_max3d_0.2_tri.csv')
+            egc_output_subdir = p.get('egc_output_subdir', fallback='00_gene_counts')
+            egc_args = (
+                f"{p['project_root']} \\\n"
+                f"{p['project_name']} {reg_dir_suffix} "
+                f"{egc_target_file} "
+                f"{p.get('egc_gene_column', fallback='Gene')} "
+                f"'{p.get('egc_suffix_regex', fallback='_(rbRNA|ntRNA)$')}' "
+                f"{egc_output_subdir} "
+                f"{p.get('egc_start_pos', fallback='none')} "
+                f"{p.get('egc_end_pos', fallback='none')}"
+            )
+
+            atlas_gene_counts_file = p.get('atlas_gene_counts_file', fallback='auto')
+            if atlas_gene_counts_file == 'auto':
+                atlas_gene_counts_file = f"{egc_output_subdir}/{p['project_name']}_{file_stem(egc_target_file)}_gene_counts.csv"
+            atlas_analysis_label = p.get('atlas_analysis_label', fallback='auto')
+            if atlas_analysis_label == 'auto':
+                atlas_analysis_label = file_stem(egc_target_file)
+            atlas_args = (
+                f"{p['project_root']} \\\n"
+                f"{p['project_name']} {reg_dir_suffix} "
+                f"{atlas_gene_counts_file} "
+                f"{p.get('atlas_dir', fallback='')} "
+                f"{p.get('atlas_output_subdir', fallback='01_atlas_correlation')} "
+                f"{p.get('atlas_sample_filter_column', fallback='structure_abbreviation')} "
+                f"'{p.get('atlas_sample_filter_contains', fallback='histology')}' "
+                f"{p.get('atlas_category_column', fallback='structure_abbreviation')} "
+                f"{p.get('atlas_sample_id_column', fallback='rna_well_id')} "
+                f"{atlas_analysis_label} "
+                f"{config_bool_string(p, 'atlas_no_plots', fallback=False)}"
+            )
+
+            pairwise_args = (
+                f"{p['project_root']} \\\n"
+                f"{p['project_name']} {reg_dir_suffix} "
+                f"{p.get('pairwise_gene_counts_dir', fallback='00_gene_counts')} "
+                f"'{p.get('pairwise_gene_counts_files', fallback='auto')}' "
+                f"{p.get('pairwise_output_subdir', fallback='02_decode_pairwise_correlation')} "
+                f"{p.get('pairwise_analysis_label', fallback='auto')} "
+                f"{config_bool_string(p, 'pairwise_no_plots', fallback=False)}"
+            )
             
-            gspf_array = f"1-{p['gspf_array_tasks']}%%{p['gspf_parallel_tasks']}"
+            gspf_array = build_array_spec(p['gspf_array_tasks'], p['gspf_parallel_tasks'])
             gspf_args = (
                 f"{p['project_root']} \\\n"
                 f"{p['project_name']} {reg_dir_suffix} {p['gspf_intensity_threshold']} {p['gspf_spotfinding_method']} "
                 f"{p['gspf_loading_mode']} {image_geom_args} {p['gspf_offset']}"
             )
 
-            if_reg_array = f"1-{p['if_reg_array_tasks']}%%{p['if_reg_parallel_tasks']}"
-            if_reg_args = (
+            nuclei_reg_array = build_array_spec(p['nuclei_reg_array_tasks'], p['nuclei_reg_parallel_tasks'])
+            nuclei_reg_args = (
                 f"{p['project_root']} \\\n"
-                f"{p['project_name']} {reg_dir_suffix} {p['if_reg_offset']} {image_geom_args} {p['if_reg_input_format']} {p['if_reg_norm_out_format']} {p['if_reg_protein_outdir']}"
+                f"{p['project_name']} {reg_dir_suffix} {p['nuclei_reg_offset']} {image_geom_args} {p['nuclei_reg_input_format']} {p['nuclei_reg_norm_out_format']} {p['nuclei_reg_aligned_round_outdir']} "
+                f"{p.get('nuclei_reg_moving_round', fallback='IF')} {p.get('nuclei_reg_channel_panel', fallback='OlympusIF')}"
             )
             
-            # IF_stitch_config 参数
-            if_stitch_config_output_dir = f"{p['project_root']}/{p['project_name']}/{reg_dir_suffix}/{p['if_reg_protein_outdir']}"
-            if_stitch_config_args = (
-                f"{p["if_stitch_config_input_dir"]} \\\n"
-                f"{if_stitch_config_output_dir} {p["if_stitch_config_match_string"]} \\\n"
-                f"{p["if_stitch_config_pixel_size_um"]} {p["if_stitch_config_image_xy"]} {p["if_stitch_config_overlap_ratio"]} {p["if_stitch_config_invert_y_flag"]} \\\n"
-                f"{p["if_stitch_config_maf_file"]} {p["if_stitch_config_position_offset"]} {p["if_stitch_config_microscope"]} \\\n"
+            run_ashlar_21 = p.getboolean('run_ashlar_21_prepare_noRef_layout', fallback=False)
+            run_ashlar_22 = p.getboolean('run_ashlar_22_stitch_initial', fallback=False)
+            run_ashlar_23 = p.getboolean('run_ashlar_23_prepare_moveImages_tileconfig', fallback=False)
+            run_ashlar_24 = p.getboolean('run_ashlar_24_stitch_mosaic', fallback=False)
+            run_ashlar_27 = p.getboolean('run_ashlar_27_make_rgbTIF_output', fallback=False)
+
+            if run_ashlar_21 or run_ashlar_22 or run_ashlar_23 or run_ashlar_24 or run_ashlar_27:
+                ashlar_21_args = (
+                    f"--project_root {p['project_root']} \\\n"
+                    f"--project_name {p['project_name']} \\\n"
+                    f"--rawdata_round {p['ashlar_21_rawdata_round']} \\\n"
+                    f"--reg_dir_suffix {reg_dir_suffix} \\\n"
+                    f"--stitching_workdir {p['ashlar_21_stitching_workdir']} \\\n"
+                    f"--channel_mode {p['ashlar_21_channel_mode']} \\\n"
+                    f"--manifest_name {p['ashlar_21_manifest_name']} \\\n"
+                    f"--link_mode {p['ashlar_21_link_mode']} \\\n"
+                    f"--output_format {p['ashlar_21_output_format']}"
+                )
+
+
+            # Stitch config 参数
+            stitch_config_args = (
+                f"{p['project_root']} \\\n"
+                f"{p['project_name']} {reg_dir_suffix} {p['stitch_config_stitching_workdir']} {p['stitch_config_source_channel_dir']} \\\n"
+                f"{p['stitch_config_match_string']} \\\n"
+                f"{p['stitch_config_pixel_size_um']} {p['stitch_config_image_xy']} {p['stitch_config_overlap_ratio']} {p['stitch_config_invert_y_flag']} \\\n"
+                f"{p['stitch_config_maf_file']} {p['stitch_config_position_offset']} {p['stitch_config_microscope']} \\\n"
             )
 
-            # IF_stitch 参数
-            if_stitch_if_dir = f"{p['project_root']}/{p['project_name']}/{reg_dir_suffix}/{p['if_reg_protein_outdir']}"
-            if_stitch_script_dir = f"{p['FovIntegration']}"
-            if_stitch_args = (
-                f"{if_stitch_if_dir} \\\n"
-                f"{p['if_stitch_grid_x']} {p['if_stitch_grid_y']} {p['if_stitch_first_index']} \\\n"
-                f"{if_stitch_script_dir} \\\n"
-                f"{p['if_stitch_stitch_pattern']} \\\n"
+            # Fiji stitch 参数
+            fiji_stitch_work_dir = f"{p['project_root']}/{p['project_name']}/{reg_dir_suffix}/{p['fiji_stitch_working_dir']}"
+            fiji_stitch_script_dir = f"{p['FovIntegration']}"
+            fiji_stitch_args = (
+                f"{fiji_stitch_work_dir} \\\n"
+                f"{p['fiji_stitch_grid_x']} {p['fiji_stitch_grid_y']} {p['fiji_stitch_first_index']} \\\n"
+                f"{fiji_stitch_script_dir} \\\n"
+                f"{p['fiji_stitch_stitch_pattern']} \\\n"
+                f"{p['fiji_stitch_source_channel']} \\\n"
             )
 
-            # IF_stitch_VisualCheck 参数
-            if_stitch_visualCheck_if_dir = f"{p['project_root']}/{p['project_name']}/{reg_dir_suffix}/{p['if_reg_protein_outdir']}"
-            if_stitch_visualCheck_script_dir = f"{p['FovIntegration']}"
-            if_stitch_visualCheck_args = (
-                f"{if_stitch_visualCheck_if_dir} \\\n"
-                f"{p['if_stitch_visualCheck_grid_x']} {p['if_stitch_visualCheck_grid_y']} {p['if_stitch_visualCheck_first_index']} \\\n"
-                f"{if_stitch_visualCheck_script_dir} \\\n"
-                f"{p['if_stitch_visualCheck_stitch_pattern']} \\\n"
+            # Fiji stitch VisualCheck 参数
+            fiji_stitch_visualCheck_if_dir = f"{p['project_root']}/{p['project_name']}/{reg_dir_suffix}/{p['nuclei_reg_aligned_round_outdir']}"
+            fiji_stitch_visualCheck_script_dir = f"{p['FovIntegration']}"
+            fiji_stitch_visualCheck_args = (
+                f"{fiji_stitch_visualCheck_if_dir} \\\n"
+                f"{p['fiji_stitch_visualCheck_grid_x']} {p['fiji_stitch_visualCheck_grid_y']} {p['fiji_stitch_visualCheck_first_index']} \\\n"
+                f"{fiji_stitch_visualCheck_script_dir} \\\n"
+                f"{p['fiji_stitch_visualCheck_stitch_pattern']} \\\n"
             )
 
+            if run_ashlar_21 or run_ashlar_22 or run_ashlar_23 or run_ashlar_24 or run_ashlar_27:
+                ashlar_22_args = (
+                    f"--project_root {p['project_root']} \\\n"
+                    f"--project_name {p['project_name']} \\\n"
+                    f"--reg_dir_suffix {reg_dir_suffix} \\\n"
+                    f"--source_channel_dir {p['ashlar_22_source_channel_dir']} \\\n"
+                    f"--stitching_round {p['ashlar_22_stitching_round']} \\\n"
+                    f"--config_name {p['ashlar_22_config_name']} \\\n"
+                    f"--registered_config_name {p['ashlar_22_registered_config_name']} \\\n"
+                    f"--stitch_result_dirname {p['ashlar_22_stitch_result_dirname']} \\\n"
+                    f"--output_prefix {p['ashlar_22_output_prefix']} \\\n"
+                    f"--make_3d {p['ashlar_22_make_3d']} \\\n"
+                    f"--rotate90 {p['ashlar_22_rotate90']} \\\n"
+                    f"--rotate_positions {p['ashlar_22_rotate_positions']} \\\n"
+                    f"--pixel_size_um {p['ashlar_22_pixel_size_um']} \\\n"
+                    f"--max_shift_px {p['ashlar_22_max_shift_px']} \\\n"
+                    f"--filter_sigma {p['ashlar_22_filter_sigma']} \\\n"
+                    f"--stitch_alpha {p['ashlar_22_stitch_alpha']} \\\n"
+                    f"--max_error {p['ashlar_22_max_error']} \\\n"
+                    f"--slice_indices '{p['ashlar_22_slice_indices']}'"
+                )
 
-            dapi_cp_array = f"1-{p['dapi_cp_array_tasks']}%%{p['dapi_cp_parallel_tasks']}"
+                ashlar_23_args = (
+                    f"--project_root {p['project_root']} \\\n"
+                    f"--project_name {p['project_name']} \\\n"
+                    f"--reg_dir_suffix {reg_dir_suffix} \\\n"
+                    f"--stitching_workdir {p['ashlar_23_stitching_workdir']} \\\n"
+                    f"--rawdata_round {p['ashlar_23_rawdata_round']} \\\n"
+                    f"--channel_mode {p['ashlar_23_channel_mode']} \\\n"
+                    f"--registered_config_name {p['ashlar_23_registered_config_name']} \\\n"
+                    f"--shifted_config_name {p['ashlar_23_shifted_config_name']} \\\n"
+                    f"--registration_log_name {p['ashlar_23_registration_log_name']} \\\n"
+                    f"--output_format {p['ashlar_23_output_format']} \\\n"
+                    f"--rotateShifts {p['ashlar_23_rotateShifts']} \\\n"
+                    f"--shift_sign {p['ashlar_23_shift_sign']}"
+                )
+
+                ashlar_24_args = (
+                    f"--project_root {p['project_root']} \\\n"
+                    f"--project_name {p['project_name']} \\\n"
+                    f"--reg_dir_suffix {reg_dir_suffix} \\\n"
+                    f"--stitching_workdir {p['ashlar_24_stitching_workdir']} \\\n"
+                    f"--channel_mode {p['ashlar_24_channel_mode']} \\\n"
+                    f"--config_for_mosaic_stitch {p['ashlar_24_config_for_mosaic_stitch']} \\\n"
+                    f"--channel_dir_prefix {p['ashlar_24_channel_dir_prefix']} \\\n"
+                    f"--stitch_result_dirname {p['ashlar_24_stitch_result_dirname']} \\\n"
+                    f"--output_prefix {p['ashlar_24_output_prefix']} \\\n"
+                    f"--output_format {p['ashlar_24_output_format']} \\\n"
+                    f"--rotateImages {p['ashlar_24_rotateImages']} \\\n"
+                    f"--make_3d {p['ashlar_24_make_3d']} \\\n"
+                    f"--pixel_size_um {p['ashlar_24_pixel_size_um']} \\\n"
+                    f"--slice_indices {p['ashlar_24_slice_indices']}"
+                )
+
+                ashlar_27_args = (
+                    f"--red_image {p['ashlar_27_red_image']} \\\n"
+                    f"--green_image {p['ashlar_27_green_image']} \\\n"
+                    f"--output_image {p['ashlar_27_output_image']} \\\n"
+                    f"--rescale_to_uint8 {p['ashlar_27_rescale_to_uint8']} \\\n"
+                    f"--percentile_min {p['ashlar_27_percentile_min']} \\\n"
+                    f"--percentile_max {p['ashlar_27_percentile_max']}"
+                )
+
+
+            dapi_cp_array = build_array_spec(p['dapi_cp_array_tasks'], p['dapi_cp_parallel_tasks'])
             dapi_cp_args = (
                 f"{p['project_root']} \\\n"
                 f"{p['project_name']} {reg_dir_suffix} {p['ref_round']} {p['dapi_cp_diameter']} {p['dapi_cp_area_thresh']} {p['dapi_cp_offset']}"
             )
 
-            cluMap_array = f"1-{p['cluMap_array_tasks']}%%{p['cluMap_parallel_tasks']}"
+            cluMap_array = build_array_spec(p['cluMap_array_tasks'], p['cluMap_parallel_tasks'])
             cluMap_args = (
                 f"{p['project_root']} \\\n"
                 f"{p['project_name']} {reg_dir_suffix} {p['ref_round']} {p['cluMap_offset']} \\\n"
@@ -204,7 +362,7 @@ def generate_shell_script(config_file):
 
             # rna_restore 参数
             rna_restore_input_dir = f"{p['project_root']}/{p['project_name']}/{reg_dir_suffix}"
-            rna_restore_array = f"1-{p['rna_restore_array_tasks']}%%{p['rna_restore_parallel_tasks']}"
+            rna_restore_array = build_array_spec(p['rna_restore_array_tasks'], p['rna_restore_parallel_tasks'])
             rna_restore_args = (
                 f"{rna_restore_input_dir} {p['rna_restore_segout_dir']} \\\n"
                 f"{p['rna_restore_raw_csv']} \\\n"
@@ -234,7 +392,7 @@ def generate_shell_script(config_file):
 
             
             # entropyTest 参数
-            et_array = f"1-{p['et_array_tasks']}%%{p['et_parallel_tasks']}"
+            et_array = build_array_spec(p['et_array_tasks'], p['et_parallel_tasks'])
             et_outdir = f"{p['project_root']}/{p['project_name']}/{reg_dir_suffix}/{p['et_prefix']}"   
             et_args =(
                 f"{p['project_root']} \\\n"
@@ -244,7 +402,7 @@ def generate_shell_script(config_file):
 
             # plotback
             pb_input_dir = f"{p['project_root']}/{p['project_name']}/{reg_dir_suffix}/"
-            pb_array = f"1-{p['pb_array_tasks']}%%{p['pb_parallel_tasks']}"
+            pb_array = build_array_spec(p['pb_array_tasks'], p['pb_parallel_tasks'])
             pb_args = (
                 f"{pb_input_dir} \\\n"
                 f"{p['pb_csv_name']} {p['pb_offset']} {p['regDir_suffix']}"
@@ -267,7 +425,7 @@ def generate_shell_script(config_file):
             pbv3_output_dir = f"{p['project_root']}/{p['project_name']}/{reg_dir_suffix}/"
             pbv3_prefix = p['regDir_suffix']
 
-            pbv3_array = f"1-{p['pbv3_array_tasks']}%%{p['pbv3_parallel_tasks']}"
+            pbv3_array = build_array_spec(p['pbv3_array_tasks'], p['pbv3_parallel_tasks'])
             pbv3_args = (
                 f"{pbv3_r_dir} \\\n"
                 f"{p['pbv3_r_file_suffix']} \\\n"
@@ -291,7 +449,7 @@ def generate_shell_script(config_file):
 
             # ssim 参数
             ssim_input_dir = f"{cpm_input_dir}/matDir/{cpm_out_dirname}/"
-            ssim_array = f"1-{p['ssim_array_tasks']}%%{p['ssim_parallel_tasks']}"
+            ssim_array = build_array_spec(p['ssim_array_tasks'], p['ssim_parallel_tasks'])
             ssim_args = (
                 f"{ssim_input_dir} {p['ssim_offset']} \\\n"
             )
@@ -360,7 +518,7 @@ def generate_shell_script(config_file):
 
 
                     array_range = f"{start - dynamic_offset + int(p['sd_offset'])}-{end - dynamic_offset + int(p['sd_offset'])}"
-                    array_string = f"--array={array_range}%%{parallel_limit}"
+                    array_string = build_array_option(array_range, parallel_limit)
                     # 构建此分片的完整 sbatch 命令
                     cmd_sd_chunk = f"""{cmd_sd_sbatch_base.replace('sbatch', f'sbatch {array_string} -p {p["sd_partition"]}', 1)}{sd_args_chunk}"""
 
@@ -444,7 +602,7 @@ def generate_shell_script(config_file):
 
 
                     array_range = f"{start - dynamic_offset + int(p['lr_offset'])}-{end - dynamic_offset + int(p['lr_offset'])}"
-                    array_string = f"--array={array_range}%%{parallel_limit}"
+                    array_string = build_array_option(array_range, parallel_limit)
                     # 构建此分片的完整 sbatch 命令
                     cmd_s2_chunk = f"""{cmd_s2_sbatch_base.replace('sbatch', f'sbatch {array_string} -p {p["lr_partition"]} -c {p["lr_cpus"]}', 1)}{lr_args_chunk}"""
 
@@ -543,7 +701,7 @@ def generate_shell_script(config_file):
 
 
                     array_range = f"{start - dynamic_offset + int(p['spf_offset'])}-{end - dynamic_offset + int(p['spf_offset'])}"
-                    array_string = f"--array={array_range}%%{parallel_limit}"
+                    array_string = build_array_option(array_range, parallel_limit)
                     # 构建此分片的完整 sbatch 命令
                     # cmd_spf_chunk = f"{cmd_spf_sbatch_base.replace('sbatch', f'sbatch {array_string} -p {p['spf_partition']}', 1)}{spf_args_chunk}"
                     cmd_spf_chunk = f"""{cmd_spf_sbatch_base.replace('sbatch', f"sbatch {array_string} -p {p['spf_partition']}", 1)}{spf_args_chunk}"""
@@ -600,48 +758,145 @@ def generate_shell_script(config_file):
             print(f"echo \"Submitted Step(GD): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
 
+        if p.getboolean('run_extract_gene_counts', fallback=False):
+            if not p.getboolean('run_decoding'):
+                print(f"\n# --- Job {job_counter}: {section_name} ({p['job_suffix']}) - Extract Gene Counts ---")
+                print(f"echo \"Starting Job {job_counter}: {p['job_suffix']} (Extract Gene Counts)\"")
+                print(f"mkdir -p {work_dir}")
+                print(f"cd {work_dir} || {{ echo 'Failed to cd into {work_dir}'; exit 1; }}\n")
+            cmd_egc = f"sbatch -p {p.get('egc_partition', fallback='C64M512G')} -c {p.get('egc_cpus', fallback='4')} --mem {p.get('egc_mem', fallback='32G')} {dependency_str} {p['script_extract_gene_counts']} \\\n{egc_args}"
+            print(f"# Submit step: Extract Gene Counts")
+            print(f"{JOB_OUT_VAR}=$(\\")
+            print(f"{cmd_egc})")
+            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
+            print(f"echo \"Submitted Step(EGC): ${{{JOB_ID_VAR}}}\"\n")
+            dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
+
+        if p.getboolean('run_atlas_correlation', fallback=False) or p.getboolean('run_decode_pairwise_correlation', fallback=False):
+            if not p.getboolean('run_decoding') and not p.getboolean('run_extract_gene_counts', fallback=False):
+                print(f"\n# --- Job {job_counter}: {section_name} ({p['job_suffix']}) - Correlation Analysis ---")
+                print(f"echo \"Starting Job {job_counter}: {p['job_suffix']} (Correlation Analysis)\"")
+                print(f"mkdir -p {work_dir}")
+                print(f"cd {work_dir} || {{ echo 'Failed to cd into {work_dir}'; exit 1; }}\n")
+
+            correlation_dependency_str = dependency_str
+            if dependency_str == f"--dependency=afterok:${{{JOB_ID_VAR}}}":
+                print(f"CORR_PARENT_JOB_ID=${{{JOB_ID_VAR}}}")
+                correlation_dependency_str = "--dependency=afterok:${CORR_PARENT_JOB_ID}"
+
+            if p.getboolean('run_atlas_correlation', fallback=False):
+                cmd_atlas = f"sbatch -p {p.get('atlas_partition', fallback='C64M512G')} -c {p.get('atlas_cpus', fallback='4')} --mem {p.get('atlas_mem', fallback='32G')} {correlation_dependency_str} {p['script_atlas_correlation']} \\\n{atlas_args}"
+                print(f"# Submit step: Atlas Correlation")
+                print(f"{JOB_OUT_VAR}=$(\\")
+                print(f"{cmd_atlas})")
+                print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
+                print(f"echo \"Submitted Step(Atlas Corr): ${{{JOB_ID_VAR}}}\"\n")
+
+            if p.getboolean('run_decode_pairwise_correlation', fallback=False):
+                cmd_pairwise = f"sbatch -p {p.get('pairwise_partition', fallback='C64M512G')} -c {p.get('pairwise_cpus', fallback='4')} --mem {p.get('pairwise_mem', fallback='32G')} {correlation_dependency_str} {p['script_decode_pairwise_correlation']} \\\n{pairwise_args}"
+                print(f"# Submit step: Decode Pairwise Correlation")
+                print(f"{JOB_OUT_VAR}=$(\\")
+                print(f"{cmd_pairwise})")
+                print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
+                print(f"echo \"Submitted Step(Decode Pairwise Corr): ${{{JOB_ID_VAR}}}\"\n")
 
 
-        if p.getboolean('run_IF_reg') or p.getboolean('run_IF_stitch') or p.getboolean('run_IF_stitch_config') or p.getboolean('run_IF_stitch_visualCheck'):
-            print(f"\n# --- Job {job_counter}: {section_name} ({p['job_suffix']}) - Proteins Image registration && stitching ---")
-            print(f"echo \"Starting Job {job_counter}: {p['job_suffix']} (Proteins Image registration && stitching)\"")
+        if p.getboolean('run_nuclei_registration') or p.getboolean('run_Fiji_stitch') or p.getboolean('run_stitch_config') or p.getboolean('run_Fiji_stitch_visualCheck'):
+            print(f"\n# --- Job {job_counter}: {section_name} ({p['job_suffix']}) - Nuclei registration && stitching ---")
+            print(f"echo \"Starting Job {job_counter}: {p['job_suffix']} (Nuclei registration && stitching)\"")
             print(f"mkdir -p {stitch_work_dir}")
             print(f"cd {stitch_work_dir} || {{ echo 'Failed to cd into {stitch_work_dir}'; exit 1; }}\n")
 
-        if p.getboolean('run_IF_reg'):
-            cmd_s6 = f"sbatch --array={if_reg_array} -p {p['if_reg_partition']} -c {p['if_reg_cpus']} {dependency_str} {p['script_IF_reg']} \\\n{if_reg_args}"
-            print(f"# Submit step: IF Registration")
+        if p.getboolean('run_nuclei_registration'):
+            cmd_s6 = f"sbatch --array={nuclei_reg_array} -p {p['nuclei_reg_partition']} -c {p['nuclei_reg_cpus']} {dependency_str} {p['script_nuclei_registration']} \\\n{nuclei_reg_args}"
+            print(f"# Submit step: Nuclei-based Registration")
             print(f"{JOB_OUT_VAR}=$(\\")
             print(f"{cmd_s6})")
             print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
-            print(f"echo \"Submitted Step(IF Reg): ${{{JOB_ID_VAR}}}\"\n")
+            print(f"echo \"Submitted Step(Nuclei-based Registration): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
 
-        if p.getboolean('run_IF_stitch_config'):
-            cmd_s7_0 = f"sbatch -p {p['if_stitch_config_partition']} -c {p['if_stitch_config_cpus']} --mem {p['if_stitch_config_mem']} {dependency_str} {p['script_IF_stitch_config']} \\\n{if_stitch_config_args}"
-            print(f"# Submit step: IF Stitch Config")
+        if run_ashlar_21:
+            print(f"\n# --- Job {job_counter}: {section_name} ({p['job_suffix']}) - Ashlar 21 prepare noRef layout ---")
+            print(f"echo \"Starting Job {job_counter}: {p['job_suffix']} (Ashlar 21 prepare noRef layout)\"")
+            print(f"mkdir -p {stitch_work_dir}")
+            print(f"cd {stitch_work_dir} || {{ echo 'Failed to cd into {stitch_work_dir}'; exit 1; }}\n")
+
+            cmd_ashlar_21 = f"sbatch -p {p['ashlar_21_partition']} -c {p['ashlar_21_cpus']} --mem {p['ashlar_21_mem']} {dependency_str} {p['script_ashlar_21_prepare_noRef_layout']} \\\n{ashlar_21_args}"
+            print(f"# Submit step: Ashlar 21 prepare noRef layout")
+            print(f"{JOB_OUT_VAR}=$(\\")
+            print(f"{cmd_ashlar_21})")
+            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
+            print(f"echo \"Submitted Step(Ashlar 21 prepare noRef layout): ${{{JOB_ID_VAR}}}\"\n")
+            dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
+
+        if p.getboolean('run_stitch_config'):
+            cmd_s7_0 = f"sbatch -p {p['stitch_config_partition']} -c {p['stitch_config_cpus']} --mem {p['stitch_config_mem']} {dependency_str} {p['script_stitch_config']} \\\n{stitch_config_args}"
+            print(f"# Submit step: Stitch Config")
             print(f"{JOB_OUT_VAR}=$(\\")
             print(f"{cmd_s7_0})")
             print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
-            print(f"echo \"Submitted Step(IF Stitch Config): ${{{JOB_ID_VAR}}}\"\n")
+            print(f"echo \"Submitted Step(Stitch Config): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
 
-        if p.getboolean('run_IF_stitch'):
-            cmd_s7 = f"sbatch -p {p['if_stitch_partition']} -c {p['if_stitch_cpus']} --mem {p['if_stitch_mem']} {dependency_str} {p['script_IF_stitch']} \\\n{if_stitch_args}"
-            print(f"# Submit step: IF Stitch")
+        if p.getboolean('run_Fiji_stitch'):
+            cmd_s7 = f"sbatch -p {p['fiji_stitch_partition']} -c {p['fiji_stitch_cpus']} --mem {p['fiji_stitch_mem']} {dependency_str} {p['script_Fiji_stitch']} \\\n{fiji_stitch_args}"
+            print(f"# Submit step: Fiji Stitch")
             print(f"{JOB_OUT_VAR}=$(\\")
             print(f"{cmd_s7})")
             print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
-            print(f"echo \"Submitted Step(IF Stitch): ${{{JOB_ID_VAR}}}\"\n")
+            print(f"echo \"Submitted Step(Fiji Stitch): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
         
-        if p.getboolean('run_IF_stitch_visualCheck'):
-            cmd_s8 = f"sbatch -p {p['if_stitch_visualCheck_partition']} -c {p['if_stitch_visualCheck_cpus']} --mem {p['if_stitch_visualCheck_mem']} {dependency_str} {p['script_IF_stitch_visualCheck']} \\\n{if_stitch_visualCheck_args}"
-            print(f"# Submit step: IF Stitch Visual Check")
+        if p.getboolean('run_Fiji_stitch_visualCheck'):
+            cmd_s8 = f"sbatch -p {p['fiji_stitch_visualCheck_partition']} -c {p['fiji_stitch_visualCheck_cpus']} --mem {p['fiji_stitch_visualCheck_mem']} {dependency_str} {p['script_Fiji_stitch_visualCheck']} \\\n{fiji_stitch_visualCheck_args}"
+            print(f"# Submit step: Fiji Stitch Visual Check")
             print(f"{JOB_OUT_VAR}=$(\\")
             print(f"{cmd_s8})")
             print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
-            print(f"echo \"Submitted Step(IF Stitch Visual Check): ${{{JOB_ID_VAR}}}\"\n")
+            print(f"echo \"Submitted Step(Fiji Stitch Visual Check): ${{{JOB_ID_VAR}}}\"\n")
+            dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
+
+        if run_ashlar_22 or run_ashlar_23 or run_ashlar_24 or run_ashlar_27:
+            print(f"\n# --- Job {job_counter}: {section_name} ({p['job_suffix']}) - Ashlar FOV stitching ---")
+            print(f"echo \"Starting Job {job_counter}: {p['job_suffix']} (Ashlar FOV stitching)\"")
+            print(f"mkdir -p {stitch_work_dir}")
+            print(f"cd {stitch_work_dir} || {{ echo 'Failed to cd into {stitch_work_dir}'; exit 1; }}\n")
+
+        if run_ashlar_22:
+            cmd_ashlar_22 = f"sbatch -p {p['ashlar_22_partition']} -c {p['ashlar_22_cpus']} --mem {p['ashlar_22_mem']} {dependency_str} {p['script_ashlar_22_stitch_initial']} \\\n{ashlar_22_args}"
+            print(f"# Submit step: Ashlar 22 stitch initial")
+            print(f"{JOB_OUT_VAR}=$(\\")
+            print(f"{cmd_ashlar_22})")
+            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
+            print(f"echo \"Submitted Step(Ashlar 22 stitch initial): ${{{JOB_ID_VAR}}}\"\n")
+            dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
+
+        if run_ashlar_23:
+            cmd_ashlar_23 = f"sbatch -p {p['ashlar_23_partition']} -c {p['ashlar_23_cpus']} --mem {p['ashlar_23_mem']} {dependency_str} {p['script_ashlar_23_prepare_moveImages_tileconfig']} \\\n{ashlar_23_args}"
+            print(f"# Submit step: Ashlar 23 prepare moveImages tileconfig")
+            print(f"{JOB_OUT_VAR}=$(\\")
+            print(f"{cmd_ashlar_23})")
+            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
+            print(f"echo \"Submitted Step(Ashlar 23 prepare moveImages tileconfig): ${{{JOB_ID_VAR}}}\"\n")
+            dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
+
+        if run_ashlar_24:
+            cmd_ashlar_24 = f"sbatch -p {p['ashlar_24_partition']} -c {p['ashlar_24_cpus']} --mem {p['ashlar_24_mem']} {dependency_str} {p['script_ashlar_24_stitch_mosaic']} \\\n{ashlar_24_args}"
+            print(f"# Submit step: Ashlar 24 stitch mosaic")
+            print(f"{JOB_OUT_VAR}=$(\\")
+            print(f"{cmd_ashlar_24})")
+            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
+            print(f"echo \"Submitted Step(Ashlar 24 stitch mosaic): ${{{JOB_ID_VAR}}}\"\n")
+            dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
+
+        if run_ashlar_27:
+            cmd_ashlar_27 = f"sbatch -p {p['ashlar_27_partition']} -c {p['ashlar_27_cpus']} --mem {p['ashlar_27_mem']} {dependency_str} {p['script_ashlar_27_make_rgbTIF_output']} \\\n{ashlar_27_args}"
+            print(f"# Submit step: Ashlar 27 make RGB TIF output")
+            print(f"{JOB_OUT_VAR}=$(\\")
+            print(f"{cmd_ashlar_27})")
+            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
+            print(f"echo \"Submitted Step(Ashlar 27 make RGB TIF output): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
 
         if p.getboolean('run_dapi_cellpose'):
@@ -792,6 +1047,9 @@ def generate_shell_script(config_file):
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
 
             
+        if enable_job_array_dependency:
+            previous_section_dependency_str = dependency_str
+
         print(f"# --- Submission of Job {job_counter} completed. ---")
         print("# ==================================================")
         print()

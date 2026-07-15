@@ -14,10 +14,10 @@ function obj = new_FilterReads_Duo( obj, endBases, showPlots, codeMap_mode )
     bases_front = new_DecodeCS(cs_front, endBases(1), codeMap_mode);  % seqD:GxxxxA
     bases_back = new_DecodeCS(cs_back, endBases(2), codeMap_mode);    % seqD:Axxxx
     
-    disp('bases_front:');
-    disp(bases_front);
-    disp('bases_back:');
-    disp(bases_back);
+    % disp('bases_front:');
+    % disp(bases_front);
+    % disp('bases_back:');
+    % disp(bases_back);
     
     for i=1:numel(bases_front)
         currSeq = bases_front{i};

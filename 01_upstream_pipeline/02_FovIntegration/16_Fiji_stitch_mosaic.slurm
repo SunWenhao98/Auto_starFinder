@@ -47,16 +47,17 @@ echo "==============================================="
 default_script_dir="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration"
 
 # 输入参数
-IF_DIR=$1
+WORK_DIR=$1
 GRID_X=$2
 GRID_Y=$3
 FIRST_INDEX=${4:-1}
 
 SCRIPT_DIR=${5:-$default_script_dir}
 STITCH_PATTERN=${6:-"Positions_from_file"} # Positions_from_file  && Snake_row_Right_down
+SOURCE_CHANNEL=${7:-"ref-DAPI"}
 
 
-echo "[DEBUG] Input directory: $IF_DIR"
+echo "[DEBUG] Input directory: $WORK_DIR"
 echo "[DEBUG] Grid X: $GRID_X"
 echo "[DEBUG] Grid Y: $GRID_Y"
 echo "[DEBUG] First index: $FIRST_INDEX"
@@ -68,20 +69,20 @@ echo "[DEBUG] Stitch type: $STITCH_PATTERN"
 echo "+++++++++++++++++++++++++++++++++++++++++++++++++++"
 
 # echo "Stitching step for directory: ref-DAPI"
-# INPUT_DIR="${IF_DIR}/ref-DAPI"
+# INPUT_DIR="${WORK_DIR}/ref-DAPI"
 # OUTPUT_NAME="stitched_ref-DAPI"
 
 # STITCH_PATTERN="Positions_from_file_p1" 
 # export INPUT_DIR GRID_X GRID_Y FIRST_INDEX OUTPUT_NAME STITCH_PATTERN SCRIPT_DIR
-# cp "$IF_DIR/TileConfiguration.registered.p1.txt" "$INPUT_DIR/TileConfiguration.registered.p1.txt"
-# /gpfs/share/home/2401111558/11_softwares/Fiji.app/ImageJ-linux64 --headless --console "$SCRIPT_DIR/12_IF2_stitch.bsh"
+# cp "$WORK_DIR/TileConfiguration.registered.p1.txt" "$INPUT_DIR/TileConfiguration.registered.p1.txt"
+# /gpfs/share/home/2401111558/11_softwares/Fiji.app/ImageJ-linux64 --headless --console "$SCRIPT_DIR/15_Fiji_stitch.bsh"
 # echo "Stitching done for directory: ref-DAPI part1 "
 
 
 # STITCH_PATTERN="Positions_from_file_p2" 
 # export INPUT_DIR GRID_X GRID_Y FIRST_INDEX OUTPUT_NAME STITCH_PATTERN SCRIPT_DIR
-# cp "$IF_DIR/TileConfiguration.registered.p2.txt" "$INPUT_DIR/TileConfiguration.registered.p2.txt"
-# /gpfs/share/home/2401111558/11_softwares/Fiji.app/ImageJ-linux64 --headless --console "$SCRIPT_DIR/12_IF2_stitch.bsh"
+# cp "$WORK_DIR/TileConfiguration.registered.p2.txt" "$INPUT_DIR/TileConfiguration.registered.p2.txt"
+# /gpfs/share/home/2401111558/11_softwares/Fiji.app/ImageJ-linux64 --headless --console "$SCRIPT_DIR/15_Fiji_stitch.bsh"
 # echo "Stitching done for directory: ref-DAPI part2 "
 
 
@@ -89,39 +90,39 @@ echo "+++++++++++++++++++++++++++++++++++++++++++++++++++"
 
 # 检测 INPUT_DIR 下包含的文件夹数量，并进行 stitching;
 STITCH_PATTERN="Positions_from_file_p1" 
-for subDir in $(find "${IF_DIR}" -mindepth 1 -maxdepth 1 -type d | sort -V); do
+for subDir in $(find "${WORK_DIR}" -mindepth 1 -maxdepth 1 -type d | sort -V); do
 
     dirName=$(basename "$subDir")
     echo "+++++++++++++++++++++++++++++++++++++++++++++++++++"
     echo "Processing directory: ${dirName}"
 
 
-    INPUT_DIR="${IF_DIR}/${dirName}"
+    INPUT_DIR="${WORK_DIR}/${dirName}"
     OUTPUT_NAME="stitched_${dirName}"
     
     export INPUT_DIR GRID_X GRID_Y FIRST_INDEX OUTPUT_NAME STITCH_PATTERN SCRIPT_DIR
-    cp "$IF_DIR/TileConfiguration.registered.p1.txt" "$INPUT_DIR/TileConfiguration.registered.p1.txt"
+    cp "$WORK_DIR/TileConfiguration.registered.p1.txt" "$INPUT_DIR/TileConfiguration.registered.p1.txt"
 
-    /gpfs/share/home/2401111558/11_softwares/Fiji.app/ImageJ-linux64 --headless --console "$SCRIPT_DIR/12_IF2_stitch.bsh"
+    /gpfs/share/home/2401111558/11_softwares/Fiji.app/ImageJ-linux64 --headless --console "$SCRIPT_DIR/15_Fiji_stitch.bsh"
     echo "Stitching done for directory: ${dirName}"
     echo "+++++++++++++++++++++++++++++++++++++++++++++++++++"
 done
 
 
 STITCH_PATTERN="Positions_from_file_p2"
-for subDir in $(find "${IF_DIR}" -mindepth 1 -maxdepth 1 -type d | sort -V); do
+for subDir in $(find "${WORK_DIR}" -mindepth 1 -maxdepth 1 -type d | sort -V); do
 
     dirName=$(basename "$subDir")
     echo "+++++++++++++++++++++++++++++++++++++++++++++++++++"
     echo "Processing directory: ${dirName}"
 
 
-    INPUT_DIR="${IF_DIR}/${dirName}"
+    INPUT_DIR="${WORK_DIR}/${dirName}"
     OUTPUT_NAME="stitched_${dirName}"
     export INPUT_DIR GRID_X GRID_Y FIRST_INDEX OUTPUT_NAME STITCH_PATTERN SCRIPT_DIR
-    cp "$IF_DIR/TileConfiguration.registered.p2.txt" "$INPUT_DIR/TileConfiguration.registered.p2.txt"
+    cp "$WORK_DIR/TileConfiguration.registered.p2.txt" "$INPUT_DIR/TileConfiguration.registered.p2.txt"
 
-    /gpfs/share/home/2401111558/11_softwares/Fiji.app/ImageJ-linux64 --headless --console "$SCRIPT_DIR/12_IF2_stitch.bsh"
+    /gpfs/share/home/2401111558/11_softwares/Fiji.app/ImageJ-linux64 --headless --console "$SCRIPT_DIR/15_Fiji_stitch.bsh"
     echo "Stitching done for directory: ${dirName}"
     echo "+++++++++++++++++++++++++++++++++++++++++++++++++++"
 done
