@@ -28,6 +28,7 @@ Options:
   --rescale_to_uint8 BOOL    Percentile-rescale both channels to uint8 [false]
   --percentile_min FLOAT     Lower percentile for rescaling [0]
   --percentile_max FLOAT     Upper percentile for rescaling [99.9]
+  --script_dir PATH          Directory containing p27_make_rgbTIF_output.py
   --conda_env NAME           Conda environment name [ashlar]
   -h, --help                 Show this help and exit
 USAGE
@@ -57,12 +58,14 @@ print_slurm_info() {
 }
 
 ### 参数默认值 ---
+DEFAULT_SCRIPT_DIR="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration"
 RED_IMAGE=""
 GREEN_IMAGE=""
 OUTPUT_IMAGE=""
 RESCALE_TO_UINT8="false"
 PERCENTILE_MIN="0"
 PERCENTILE_MAX="99.9"
+SCRIPT_DIR="$DEFAULT_SCRIPT_DIR"
 CONDA_ENV="ashlar"
 
 ### 参数解析 ---
@@ -74,6 +77,7 @@ while [[ $# -gt 0 ]]; do
         --rescale_to_uint8) RESCALE_TO_UINT8="$2"; shift 2 ;;
         --percentile_min) PERCENTILE_MIN="$2"; shift 2 ;;
         --percentile_max) PERCENTILE_MAX="$2"; shift 2 ;;
+        --script_dir) SCRIPT_DIR="$2"; shift 2 ;;
         --conda_env) CONDA_ENV="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) echo "Error: Unknown parameter: $1" >&2; print_usage >&2; exit 1 ;;
@@ -86,7 +90,7 @@ done
 [[ -n "$OUTPUT_IMAGE" ]] || { echo "Error: --output_image is required" >&2; exit 1; }
 
 ### 环境准备 ---
-PY_SCRIPT="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/p27_make_rgbTIF_output.py"
+PY_SCRIPT="${SCRIPT_DIR}/p27_make_rgbTIF_output.py"
 LOG_DIR="logs_TE_rgb"
 
 mkdir -p "$LOG_DIR"
@@ -107,6 +111,7 @@ echo "[PARAM] OUTPUT_IMAGE=${OUTPUT_IMAGE}"
 echo "[PARAM] RESCALE_TO_UINT8=${RESCALE_TO_UINT8}"
 echo "[PARAM] PERCENTILE_MIN=${PERCENTILE_MIN}"
 echo "[PARAM] PERCENTILE_MAX=${PERCENTILE_MAX}"
+echo "[PARAM] SCRIPT_DIR=${SCRIPT_DIR}"
 echo "[PARAM] CONDA_ENV=${CONDA_ENV}"
 
 ### 执行 Python ---

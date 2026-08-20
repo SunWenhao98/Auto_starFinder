@@ -35,10 +35,11 @@ Path/name options:
 
 Ashlar options:
   --output_format FORMAT           preserve, uint8, or uint16 [preserve]
-  --rotateImages BOOL              Rotate each FOV clockwise before stitching [false]
+  --rotate_images BOOL             Rotate each FOV clockwise before stitching [false]
   --make_3d BOOL                   Write 3D stack mosaic [false]
   --pixel_size_um FLOAT            Pixel size in um/pixel [0.142]
   --slice_indices LIST             Comma-separated 1-based z slices []
+  --script_dir PATH                Directory containing p24_ashlar_stitch_mosaic.py
   --conda_env NAME                 Conda environment name [ashlar]
   -h, --help                       Show this help and exit
 USAGE
@@ -95,6 +96,7 @@ resolve_channel_names() {
     esac
 }
 
+DEFAULT_SCRIPT_DIR="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration"
 PROJECT_ROOT=""
 PROJECT_NAME=""
 REG_DIR_SUFFIX=""
@@ -109,6 +111,7 @@ ROTATE_IMAGES="false"
 MAKE_3D="false"
 PIXEL_SIZE_UM="0.142"
 SLICE_INDICES=""
+SCRIPT_DIR="$DEFAULT_SCRIPT_DIR"
 CONDA_ENV="ashlar"
 
 while [[ $# -gt 0 ]]; do
@@ -123,10 +126,11 @@ while [[ $# -gt 0 ]]; do
         --stitch_result_dirname) STITCH_RESULT_DIRNAME="$2"; shift 2 ;;
         --output_prefix) OUTPUT_PREFIX="$2"; shift 2 ;;
         --output_format) OUTPUT_FORMAT="$2"; shift 2 ;;
-        --rotateImages) ROTATE_IMAGES="$2"; shift 2 ;;
+        --rotate_images) ROTATE_IMAGES="$2"; shift 2 ;;
         --make_3d) MAKE_3D="$2"; shift 2 ;;
         --pixel_size_um) PIXEL_SIZE_UM="$2"; shift 2 ;;
         --slice_indices) SLICE_INDICES="$2"; shift 2 ;;
+        --script_dir) SCRIPT_DIR="$2"; shift 2 ;;
         --conda_env) CONDA_ENV="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) echo "Error: Unknown parameter: $1" >&2; print_usage >&2; exit 1 ;;
@@ -145,7 +149,7 @@ WORK_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/${REG_DIR_SUFFIX}/${STITCHING_WORKDIR}
 CONFIG_FILE="${WORK_DIR}/${CONFIG_FOR_MOSAIC_STITCH}"
 STITCH_RESULT_DIR="${WORK_DIR}/${STITCH_RESULT_DIRNAME}"
 
-PY_SCRIPT="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/p24_ashlar_stitch_mosaic.py"
+PY_SCRIPT="${SCRIPT_DIR}/p24_ashlar_stitch_mosaic.py"
 LOG_DIR="logs_ashlar_direct_stitch"
 
 mkdir -p "$LOG_DIR"
@@ -177,6 +181,7 @@ echo "[PARAM] ROTATE_IMAGES=${ROTATE_IMAGES}"
 echo "[PARAM] MAKE_3D=${MAKE_3D}"
 echo "[PARAM] PIXEL_SIZE_UM=${PIXEL_SIZE_UM}"
 echo "[PARAM] SLICE_INDICES=${SLICE_INDICES}"
+echo "[PARAM] SCRIPT_DIR=${SCRIPT_DIR}"
 echo "[PARAM] CONDA_ENV=${CONDA_ENV}"
 
 IFS=',' read -r -a CHANNEL_ARRAY <<< "$CHANNEL_NAMES"

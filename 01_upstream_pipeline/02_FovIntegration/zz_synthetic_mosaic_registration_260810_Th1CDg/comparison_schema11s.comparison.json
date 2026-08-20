@@ -1,0 +1,21 @@
+{
+  "schema_name": "starfinder_translation_registration_comparison",
+  "schema_version": "1.0",
+  "created_at_utc": "2026-08-10T02:19:16.897112+00:00",
+  "reference_image": "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/zz_synthetic_mosaic_registration_260810_Th1CDg/fixed_unequal.tif",
+  "moving_image": "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/zz_synthetic_mosaic_registration_260810_Th1CDg/moving_unequal.tif",
+  "mapping": "moving_to_reference",
+  "python": {
+    "shift_x_px": -17.15,
+    "shift_y_px": 13.5
+  },
+  "matlab": {
+    "shift_x_px": -17.239890239760626,
+    "shift_y_px": 13.510285601781277
+  },
+  "delta_shift_x_px": -0.08989023976062782,
+  "delta_shift_y_px": 0.01028560178127691,
+  "euclidean_delta_px": 0.09047678601843769,
+  "agreement_tolerance_px": 0.5,
+  "agreement_status": "PASS"
+}

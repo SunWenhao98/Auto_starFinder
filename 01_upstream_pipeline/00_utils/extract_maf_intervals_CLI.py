@@ -22,28 +22,41 @@ EXPECTED_PREAMBLE = (
 )
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Keep one complete PositionIdentifier interval in a Leica LAS X MAF file."
-    )
-    parser.add_argument("--input_file", required=True, type=Path, help="Existing source MAF file.")
-    parser.add_argument("--output_file", required=True, type=Path, help="New filtered MAF file; must not exist.")
-    parser.add_argument("--start_position", required=True, type=int, help="First PositionIdentifier number to keep.")
-    parser.add_argument("--end_position", required=True, type=int, help="Last PositionIdentifier number to keep.")
-    return parser
+def parse_position_ranges(value: str) -> set[int]:
+    normalized = re.sub(r"\s+", "", value)
+    if not normalized:
+        raise ValueError("position_ranges cannot be empty")
+
+    positions: set[int] = set()
+    for item in normalized.split(","):
+        if not item:
+            raise ValueError("position_ranges contains an empty item")
+
+        if re.fullmatch(r"[0-9]+", item):
+            start = end = int(item)
+        else:
+            match = re.fullmatch(r"([0-9]+)-([0-9]+)", item)
+            if match is None:
+                raise ValueError(f"invalid position range: {item!r}")
+            start = int(match.group(1))
+            end = int(match.group(2))
+
+        if start > end:
+            raise ValueError(f"position range start is greater than end: {item!r}")
+        positions.update(range(start, end + 1))
+
+    return positions
 
 
-def _validate_paths(input_file: Path, output_file: Path, start_position: int, end_position: int) -> None:
-    if start_position > end_position:
-        raise ValueError("start_position must be less than or equal to end_position")
-    if not input_file.is_file():
-        raise FileNotFoundError(f"input_file not found or not a regular file: {input_file}")
-    if input_file.resolve() == output_file.resolve():
+def _validate_paths(input_path: Path, output_path: Path) -> None:
+    if not input_path.is_file():
+        raise FileNotFoundError(f"input_file not found or not a regular file: {input_path}")
+    if input_path.resolve() == output_path.resolve():
         raise ValueError("input_file and output_file must be different paths")
-    if output_file.exists():
-        raise FileExistsError(f"output_file already exists; refusing to overwrite: {output_file}")
-    if not output_file.parent.is_dir():
-        raise FileNotFoundError(f"output_file parent directory not found: {output_file.parent}")
+    if output_path.exists():
+        raise FileExistsError(f"output_file already exists; refusing to overwrite: {output_path}")
+    if not output_path.parent.is_dir():
+        raise FileNotFoundError(f"output_file parent directory not found: {output_path.parent}")
 
 
 def _extract_preamble(raw_bytes: bytes) -> bytes:
@@ -65,9 +78,7 @@ def _parse_position_number(point: ET.Element, index: int) -> int:
         raise ValueError(f"PositionIdentifier must match PositionN at stage-point index {index}: {identifier!r}")
 
     position_id = point.get("PositionID")
-    if position_id is None:
-        raise ValueError(f"PositionID missing for {identifier}")
-    if re.fullmatch(r"[0-9]+", position_id) is None:
+    if position_id is None or re.fullmatch(r"[0-9]+", position_id) is None:
         raise ValueError(f"PositionID must be a nonnegative integer for {identifier}: {position_id!r}")
 
     number = int(match.group(1))
@@ -79,22 +90,24 @@ def _parse_position_number(point: ET.Element, index: int) -> int:
 def _validate_serialized_output(output_bytes: bytes, preamble: bytes, expected_numbers: list[int]) -> None:
     if not output_bytes.startswith(preamble):
         raise ValueError("serialized MAF preamble changed unexpectedly")
+
     root = ET.fromstring(output_bytes)
     if root.tag != ROOT_TAG:
         raise ValueError(f"serialized MAF root must be {ROOT_TAG!r}, found {root.tag!r}")
+
     points = list(root)
     if any(point.tag != POINT_TAG for point in points):
         raise ValueError("serialized MAF contains an unexpected direct child element")
     observed_numbers = [_parse_position_number(point, index) for index, point in enumerate(points, start=1)]
     if observed_numbers != expected_numbers:
-        raise ValueError("serialized MAF PositionIdentifier sequence does not match the requested interval")
+        raise ValueError("serialized MAF PositionIdentifier sequence does not match the requested positions")
 
 
-def _publish_without_overwrite(output_bytes: bytes, input_file: Path, output_file: Path) -> None:
+def _publish_without_overwrite(output_bytes: bytes, input_path: Path, output_path: Path) -> None:
     file_descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{output_file.name}.",
+        prefix=f".{output_path.name}.",
         suffix=".tmp",
-        dir=output_file.parent,
+        dir=output_path.parent,
     )
     temporary_path = Path(temporary_name)
     try:
@@ -102,23 +115,25 @@ def _publish_without_overwrite(output_bytes: bytes, input_file: Path, output_fil
             handle.write(output_bytes)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(temporary_path, input_file.stat().st_mode & 0o666)
-        os.link(temporary_path, output_file)
+        os.chmod(temporary_path, input_path.stat().st_mode & 0o666)
+        os.link(temporary_path, output_path)
     except FileExistsError as error:
-        raise FileExistsError(f"output_file already exists; refusing to overwrite: {output_file}") from error
+        raise FileExistsError(f"output_file already exists; refusing to overwrite: {output_path}") from error
     finally:
         temporary_path.unlink(missing_ok=True)
 
 
-def filter_maf_file(
+def extract_maf_positions(
     input_file: str | Path,
     output_file: str | Path,
-    start_position: int,
-    end_position: int,
+    requested_positions: set[int],
 ) -> dict[str, int]:
+    if not requested_positions:
+        raise ValueError("requested_positions cannot be empty")
+
     input_path = Path(input_file)
     output_path = Path(output_file)
-    _validate_paths(input_path, output_path, start_position, end_position)
+    _validate_paths(input_path, output_path)
 
     raw_bytes = input_path.read_bytes()
     preamble = _extract_preamble(raw_bytes)
@@ -139,18 +154,14 @@ def filter_maf_file(
         seen_numbers.add(number)
         point_numbers.append(number)
 
-    expected_numbers = list(range(start_position, end_position + 1))
-    missing_numbers = [number for number in expected_numbers if number not in seen_numbers]
+    missing_numbers = sorted(requested_positions - seen_numbers)
     if missing_numbers:
         missing_text = ",".join(f"Position{number}" for number in missing_numbers[:20])
-        raise ValueError(f"missing target PositionIdentifier values: {missing_text}")
+        raise ValueError(f"requested Position values are missing: {missing_text}")
 
-    kept_numbers = [number for number in point_numbers if start_position <= number <= end_position]
-    if kept_numbers != expected_numbers:
-        raise ValueError("target PositionIdentifier values must occur once in ascending order")
-
+    expected_numbers = [number for number in point_numbers if number in requested_positions]
     for point, number in zip(points, point_numbers, strict=True):
-        if not start_position <= number <= end_position:
+        if number not in requested_positions:
             root.remove(point)
 
     output_bytes = preamble + ET.tostring(root, encoding="utf-8")
@@ -161,33 +172,49 @@ def filter_maf_file(
     kept_count = len(expected_numbers)
     return {
         "initial_count": initial_count,
+        "requested_count": len(requested_positions),
         "kept_count": kept_count,
         "removed_count": initial_count - kept_count,
-        "start_position": start_position,
-        "end_position": end_position,
     }
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="从 Leica LAS X MAF 文件中提取多个 Position 单点或连续闭区间。",
+        epilog=(
+            "示例:\n"
+            "  python extract_maf_intervals_CLI.py --input_file input.maf "
+            "--output_file selected.maf --position_ranges \"67, 896-902, 908-913\""
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--input_file", required=True, type=Path, help="输入 MAF 文件路径")
+    parser.add_argument("--output_file", required=True, type=Path, help="输出 MAF 文件路径，不能已存在")
+    parser.add_argument(
+        "--position_ranges",
+        required=True,
+        help="要提取的 Position，例如：67, 896-902, 908-913",
+    )
+    return parser
 
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     try:
-        stats = filter_maf_file(
-            input_file=args.input_file,
-            output_file=args.output_file,
-            start_position=args.start_position,
-            end_position=args.end_position,
-        )
+        requested_positions = parse_position_ranges(args.position_ranges)
+        stats = extract_maf_positions(args.input_file, args.output_file, requested_positions)
     except (OSError, ValueError, ET.ParseError) as error:
         parser.exit(1, f"ERROR: {error}\n")
 
     print(f"input_file={args.input_file}")
     print(f"output_file={args.output_file}")
-    print(f"start_position={stats['start_position']}")
-    print(f"end_position={stats['end_position']}")
+    print(f"position_ranges={args.position_ranges}")
     print(f"initial_count={stats['initial_count']}")
+    print(f"requested_count={stats['requested_count']}")
     print(f"kept_count={stats['kept_count']}")
     print(f"removed_count={stats['removed_count']}")
+    print("STATUS: SUCCESS")
     return 0
 
 

@@ -1,0 +1,43 @@
+{
+  "schema_name": "starfinder_translation_application",
+  "schema_version": "1.0",
+  "created_at_utc": "2026-08-10T02:15:12.418055+00:00",
+  "mapping": "moving_to_reference",
+  "transform_json": "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/zz_synthetic_mosaic_registration_260810_Th1CDg/slurm_schema11_retry.matlab.transform.json",
+  "reference_image": "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/zz_synthetic_mosaic_registration_260810_Th1CDg/fixed_unequal.tif",
+  "moving_image": "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/zz_synthetic_mosaic_registration_260810_Th1CDg/moving_unequal.tif",
+  "transform": {
+    "shift_x_px": -17.239890239760626,
+    "shift_y_px": 13.510285601781277
+  },
+  "resampling": {
+    "interpolation_order": 1,
+    "tile_size_px": 128,
+    "outside_value": 0,
+    "compression": "zlib"
+  },
+  "output": {
+    "registered_mosaic": "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/zz_synthetic_mosaic_registration_260810_Th1CDg/slurm_schema11_retry.matlab.registered_moving.ome.tif",
+    "registered_preview_tif": "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/zz_synthetic_mosaic_registration_260810_Th1CDg/slurm_schema11_retry.matlab.registered_moving.preview.tif",
+    "qc_png": "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/zz_synthetic_mosaic_registration_260810_Th1CDg/slurm_schema11_retry.matlab.registration_qc.png",
+    "qc_pdf": "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/zz_synthetic_mosaic_registration_260810_Th1CDg/slurm_schema11_retry.matlab.registration_qc.pdf",
+    "shape_yx": [
+      640,
+      704
+    ],
+    "dtype": "uint16",
+    "valid_output_bbox_yx": {
+      "y0": 14,
+      "y1": 622,
+      "x0": 0,
+      "x1": 704
+    },
+    "clipped_source_bounds_yx_px": {
+      "y0": 0.0,
+      "y1": 608.0,
+      "x0": 17.239890239760626,
+      "x1": 721.2398902397606
+    },
+    "canvas_padding": "constant_zero"
+  }
+}

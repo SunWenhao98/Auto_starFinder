@@ -1,0 +1,12 @@
+{
+  "shift_y_px": 13.5,
+  "shift_x_px": -17.25,
+  "fixed_shape_yx": [
+    640,
+    704
+  ],
+  "moving_shape_yx": [
+    608,
+    736
+  ]
+}

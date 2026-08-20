@@ -6,7 +6,7 @@
 #SBATCH --qos=normal
 #SBATCH -n 1
 #SBATCH -c 4
-#SBATCH --mem=16G
+
 #SBATCH --time=04:00:00
 #SBATCH --no-requeue
 #SBATCH --export=ALL
@@ -15,7 +15,7 @@ set -euo pipefail
 
 print_usage() {
     cat <<'USAGE'
-Usage: 21_prepare_noRef_layout.sh --project_root PATH --project_name NAME --reg_dir_suffix NAME [options]
+Usage: 21_prepare_layout.sh --project_root PATH --project_name NAME --reg_dir_suffix NAME [options]
 
 Prepare independent raw-channel folders for strict TileConfiguration stitching.
 
@@ -27,10 +27,11 @@ Required:
 Options:
   --rawdata_round NAME       Raw data round under 01_data [IF]
   --stitching_workdir NAME   Work directory under registration dir [IFindep]
-  --channel_mode MODE        LeicaIF, OlympusIF, or LeicaSeqE [LeicaIF]
+  --channel_mode MODE        LeicaIF, OlympusIF, LeicaSeqE, or LeicaRef [LeicaIF]
   --manifest_name NAME       Manifest filename [extra_layout_manifest.csv]
   --link_mode MODE           symlink, hardlink, or copy [copy]
   --output_format FORMAT     preserve, uint8, or uint16 [preserve]
+  --script_dir PATH          Directory containing p21_prepare_noRef_layout.py
   --conda_env NAME           Conda environment name [ashlar]
   -h, --help                 Show this help and exit
 USAGE
@@ -67,13 +68,14 @@ resolve_channel_mapping() {
             ;;
         *)
             echo "Error: Unsupported channel_mode for step 21: $1" >&2
-            echo "Supported modes: LeicaIF, OlympusIF, LeicaSeqE" >&2
+            echo "Supported modes: LeicaIF, OlympusIF, LeicaSeqE, LeicaRef" >&2
             exit 1
             ;;
     esac
 }
 
 ### 参数默认值 ---
+DEFAULT_SCRIPT_DIR="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration"
 PROJECT_ROOT=""
 PROJECT_NAME=""
 RAWDATA_ROUND="IF"
@@ -83,6 +85,7 @@ CHANNEL_MODE="LeicaIF"
 MANIFEST_NAME="extra_layout_manifest.csv"
 LINK_MODE="copy"
 OUTPUT_FORMAT="preserve"
+SCRIPT_DIR="$DEFAULT_SCRIPT_DIR"
 CONDA_ENV="ashlar"
 
 ### 参数解析 ---
@@ -97,6 +100,7 @@ while [[ $# -gt 0 ]]; do
         --manifest_name) MANIFEST_NAME="$2"; shift 2 ;;
         --link_mode) LINK_MODE="$2"; shift 2 ;;
         --output_format) OUTPUT_FORMAT="$2"; shift 2 ;;
+        --script_dir) SCRIPT_DIR="$2"; shift 2 ;;
         --conda_env) CONDA_ENV="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) echo "Error: Unknown parameter: $1" >&2; print_usage >&2; exit 1 ;;
@@ -113,7 +117,7 @@ OUTPUT_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/${REG_DIR_SUFFIX}/${STITCHING_WORKDI
 CHANNELS="$(resolve_channel_mapping "$CHANNEL_MODE")"
 
 ### 环境准备 ---
-PY_SCRIPT="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/p21_prepare_noRef_layout.py"
+PY_SCRIPT="${SCRIPT_DIR}/p21_prepare_noRef_layout.py"
 LOG_DIR="logs_prepare_noRef_layout"
 
 mkdir -p "$LOG_DIR"
@@ -140,6 +144,7 @@ echo "[PARAM] OUTPUT_DIR=${OUTPUT_DIR}"
 echo "[PARAM] MANIFEST_NAME=${MANIFEST_NAME}"
 echo "[PARAM] LINK_MODE=${LINK_MODE}"
 echo "[PARAM] OUTPUT_FORMAT=${OUTPUT_FORMAT}"
+echo "[PARAM] SCRIPT_DIR=${SCRIPT_DIR}"
 echo "[PARAM] CONDA_ENV=${CONDA_ENV}"
 
 ### 执行 Python ---

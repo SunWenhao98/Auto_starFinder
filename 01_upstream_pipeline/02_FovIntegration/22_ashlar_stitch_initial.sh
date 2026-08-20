@@ -29,7 +29,7 @@ Required:
 
 Path name options:
   --config_name NAME               Config file name [TileConfiguration.txt]
-  --registered_config_name NAME    Registered config file name [TileConfiguration.registered.txt]
+  --registered_config_name NAME    Registered config file name [TileConfiguration.Ashlar.txt]
   --stitch_result_dirname NAME     Output subdirectory name [stitching_results]
   --output_prefix PREFIX           Output image prefix inside output subdirectory [stitched_ref_ashlar]
 
@@ -43,6 +43,7 @@ Ashlar options:
   --stitch_alpha FLOAT             Ashlar alpha for automatic max_error [0.01]
   --max_error VALUE                Explicit Ashlar max_error or auto [auto]
   --slice_indices LIST             Comma-separated 1-based z slices []
+  --script_dir PATH                Directory containing p22_ashlar_stitch_initial.py
   --conda_env NAME                 Conda environment name [ashlar]
   -h, --help                       Show this help and exit
 USAGE
@@ -72,13 +73,14 @@ print_slurm_info() {
 }
 
 ### 参数默认值 ---
+DEFAULT_SCRIPT_DIR="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration"
 PROJECT_ROOT=""
 PROJECT_NAME=""
 REG_DIR_SUFFIX=""
 SOURCE_CHANNEL_DIR=""
 STITCHING_ROUND=""
 CONFIG_NAME="TileConfiguration.txt"
-REGISTERED_CONFIG_NAME="TileConfiguration.registered.txt"
+REGISTERED_CONFIG_NAME="TileConfiguration.Ashlar.txt"
 STITCH_RESULT_DIRNAME="stitching_results"
 OUTPUT_PREFIX="stitched_ref_ashlar"
 MAKE_3D="false"
@@ -90,6 +92,7 @@ FILTER_SIGMA="1.0"
 STITCH_ALPHA="0.01"
 MAX_ERROR="auto"
 SLICE_INDICES=""
+SCRIPT_DIR="$DEFAULT_SCRIPT_DIR"
 CONDA_ENV="ashlar"
 
 ### 参数解析 ---
@@ -113,6 +116,7 @@ while [[ $# -gt 0 ]]; do
         --stitch_alpha) STITCH_ALPHA="$2"; shift 2 ;;
         --max_error) MAX_ERROR="$2"; shift 2 ;;
         --slice_indices) SLICE_INDICES="$2"; shift 2 ;;
+        --script_dir) SCRIPT_DIR="$2"; shift 2 ;;
         --conda_env) CONDA_ENV="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) echo "Error: Unknown parameter: $1" >&2; print_usage >&2; exit 1 ;;
@@ -133,7 +137,7 @@ REGISTERED_CONFIG_FILE="${WORK_DIR}/${REGISTERED_CONFIG_NAME}"
 OUTPUT_IMAGE_PREFIX="${WORK_DIR}/${STITCH_RESULT_DIRNAME}/${OUTPUT_PREFIX}"
 
 ### 环境准备 ---
-PY_SCRIPT="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/p22_ashlar_stitch_initial.py"
+PY_SCRIPT="${SCRIPT_DIR}/p22_ashlar_stitch_initial.py"
 LOG_DIR="logs_ashlar_initial"
 
 mkdir -p "$LOG_DIR"
@@ -164,6 +168,7 @@ echo "[PARAM] FILTER_SIGMA=${FILTER_SIGMA}"
 echo "[PARAM] STITCH_ALPHA=${STITCH_ALPHA}"
 echo "[PARAM] MAX_ERROR=${MAX_ERROR}"
 echo "[PARAM] SLICE_INDICES=${SLICE_INDICES}"
+echo "[PARAM] SCRIPT_DIR=${SCRIPT_DIR}"
 echo "[PARAM] CONDA_ENV=${CONDA_ENV}"
 
 echo "Load conda environment: ${CONDA_ENV}"

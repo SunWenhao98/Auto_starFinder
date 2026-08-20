@@ -2,37 +2,62 @@
 # ==============================================================================
 # copy_h5ad_downstream.sh
 # ==============================================================================
-# 功能：从指定样本的集成结果文件夹中，按条件通配匹配子文件夹，拷贝特定文件到下游目录。
+# 功能：从样本的集成结果文件夹中，按条件子串匹配子文件夹，拷贝指定文件到下游目录。
+#       常用于将 upstream 集成后的 h5ad 文件分发到 downstream 分析目录。
 #
-# 使用场景示例：
-#   将 GBM003/GBM004/GBM005 中 03_integration* 下包含
-#   GBM260421p2_mat260625/626/627 的子文件夹内的 *.h5ad 分别拷贝到
-#   04_DownstreamDir/GBM260421p2_mat2606XX/001_rawh5ad/
+# === 使用方法 ===
 #
-# 匹配方式：
-#   对每个条件字符串（condition），在样本的集成文件夹下查找
-#   文件夹名中包含该字符串的子文件夹（子串通配），然后拷贝匹配的文件。
+# 基本用法（使用脚本内默认参数）：
+#   ./copy_h5ad_downstream.sh
 #
-# 用法：
-#   ./copy_h5ad_downstream.sh [选项]
+# 常用场景：为特定样本拷贝 h5ad 文件到下游分析目录：
+#   ./copy_h5ad_downstream.sh \
+#       --samples "GBM003 GBM004" \
+#       --conditions "GBM260421p2_mat260625 GBM260421p2_mat260626"
 #
-# 选项：
-#   --src-parent DIR   源父目录（默认参见脚本内 defaults 区域）
-#   --samples NAMES    样本名列表，空格分隔，用引号包裹
-#                      默认: "GBM003 GBM004 GBM005"
+# 试运行（先看效果，不实际拷贝）：
+#   ./copy_h5ad_downstream.sh --dry-run
+#
+# 覆盖目标已有文件：
+#   ./copy_h5ad_downstream.sh --overwrite
+#
+# === 匹配方式 ===
+#   对每个 condition 字符串，在样本的集成文件夹下遍历子文件夹名，
+#   取文件夹名中包含该 condition 的子串匹配文件夹，拷贝其中匹配的文件。
+#
+#   目录结构示例：
+#   {src_parent}/GBM003/03_integration*/
+#       GBM260421p2_mat260625_xxx/
+#           result.h5ad          ← 匹配 condition="GBM260421p2_mat260625"
+#       GBM260421p2_mat260626_yyy/
+#           result.h5ad          ← 匹配 condition="GBM260421p2_mat260626"
+#   →
+#   {dst_parent}/GBM260421p2_mat260625/001_rawh5ad/result.h5ad
+#   {dst_parent}/GBM260421p2_mat260626/001_rawh5ad/result.h5ad
+#
+# === 参数说明 ===
+#
+#   --src-parent DIR   源父目录
+#                      默认: labShare/.../03_rawTifDir
+#   --samples NAMES    样本名列表（空格分隔，引号包裹）
+#                      默认: "GBM001 GBM002 ... GBM009"
 #   --integ-glob PAT   集成文件夹 glob 模式
 #                      默认: "03_integration*"
-#   --conditions NAMES 条件子串列表，空格分隔，用引号包裹
-#                      默认: "GBM260421p2_mat260625 GBM260421p2_mat260626 GBM260421p2_mat260627"
-#   --file-pattern PAT 要拷贝的文件名模式（通配）
+#   --conditions NAMES 条件子串列表（空格分隔，引号包裹），每个 condition
+#                      同时作为目标目录名的一部分
+#                      默认: "GBM260421p2_mat260625 ..."
+#   --file-pattern PAT 要拷贝的文件名通配模式
 #                      默认: "*.h5ad"
-#   --dst-parent DIR   目标父目录（默认参见脚本内 defaults 区域）
-#   --dst-subdir NAME  目标子目录名，置于 {condition}/{dst-subdir}/
+#   --dst-parent DIR   目标父目录
+#                      默认: 01_project/.../04_DownstreamDir
+#   --dst-subdir NAME  目标子目录名，最终路径 {dst_parent}/{condition}/{dst_subdir}/
 #                      默认: "001_rawh5ad"
 #   --dry-run          仅打印待执行操作，不实际拷贝
-#   --overwrite        覆盖目标已存在的同名文件（默认跳过）
-#   -v, --verbose      详细输出（打印每个操作）
+#   --overwrite        覆盖目标已有同名文件（默认跳过）
+#   -v, --verbose      详细输出
 #   --help             显示本帮助信息
+#
+# 注意：拷贝用 cp 而非 mv，保留源数据；大文件无进度条。
 #
 # ==============================================================================
 
@@ -42,9 +67,9 @@ set -euo pipefail
 # 当前场景默认路径
 DEF_SRC_PARENT="/gpfs/share/home/2401111558/labShare/2401111558/01_project/08_projGBM/01_Data/03_rawTifDir"
 DEF_DST_PARENT="/gpfs/share/home/2401111558/01_project/08_projGBM/01_Data/04_DownstreamDir"
-DEF_SAMPLES="GBM003 GBM004 GBM005"
+DEF_SAMPLES="GBM001 GBM002 GBM003 GBM004 GBM005 GBM006 GBM007 GBM008 GBM009"
 DEF_INTEG_GLOB="03_integration*"
-DEF_CONDITIONS="GBM260421p2_mat260625 GBM260421p2_mat260626 GBM260421p2_mat260627"
+DEF_CONDITIONS="GBMp1p2p3_mat260714"
 DEF_FILE_PATTERN="*.h5ad"
 DEF_DST_SUBDIR="001_rawh5ad"
 
@@ -61,7 +86,30 @@ OVERWRITE=0
 VERBOSE=0
 
 usage() {
-    sed -n '/^# ===== Usage/,/^# =====/p' "$0" | grep -v '^# =====' | sed 's/^# //'
+    cat <<EOF
+功能: 从样本集成文件夹中按条件子串匹配子文件夹，拷贝文件到下游目录。
+
+用法:
+  ./$(basename "$0") [选项]
+
+常用示例:
+  ./$(basename "$0") --samples "GBM003 GBM004" --conditions "GBM260421p2_mat260625"
+  ./$(basename "$0") --dry-run                          # 试运行
+  ./$(basename "$0") --overwrite                        # 覆盖已有
+
+选项:
+  --src-parent DIR   源父目录 (默认: labShare/.../03_rawTifDir)
+  --samples NAMES    样本名列表，空格分隔，引号包裹 (默认: GBM001-GBM009)
+  --integ-glob PAT   集成文件夹 glob 模式 (默认: 03_integration*)
+  --conditions NAMES 条件子串列表，引号包裹，同时作为目标目录名
+  --file-pattern PAT 要拷贝的文件通配模式 (默认: *.h5ad)
+  --dst-parent DIR   目标父目录 (默认: .../04_DownstreamDir)
+  --dst-subdir NAME  目标子目录名，路径 {condition}/{dst-subdir}/ (默认: 001_rawh5ad)
+  --dry-run          仅打印，不实际拷贝
+  --overwrite        覆盖目标已有文件 (默认跳过)
+  -v, --verbose      详细输出
+  --help             显示本帮助
+EOF
     exit 0
 }
 

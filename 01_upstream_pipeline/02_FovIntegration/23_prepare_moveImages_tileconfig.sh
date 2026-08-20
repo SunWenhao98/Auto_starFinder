@@ -15,7 +15,7 @@ set -euo pipefail
 
 print_usage() {
     cat <<'USAGE'
-Usage: 23_prepare_moveImages_tileconfig.sh --project_root PATH --project_name NAME --reg_dir_suffix NAME --stitching_workdir NAME --rawdata_round NAME --channel_mode MODE [options]
+Usage: 23_prepare_moveImages_tileconfig.sh --project_root PATH --project_name NAME --reg_dir_suffix NAME --stitching_workdir NAME --rawdata_round NAME --channel_mode MODE --registered_config_name NAME --shifted_config_name NAME [options]
 
 Prepare raw channel layout and shifted TileConfiguration from registered coordinates.
 For full explicit path control, call p23_prepare_moveImages_tileconfig.py directly.
@@ -27,16 +27,17 @@ Required:
   --stitching_workdir NAME         Work directory under registration dir, e.g. IFnew_uint8
   --rawdata_round NAME             Raw round directory under 01_data, e.g. IF or round011
   --channel_mode MODE              LeicaIF, OlympusIF, or LeicaSeqE
+  --registered_config_name NAME    Explicit Fiji/Ashlar registered config filename
+  --shifted_config_name NAME       Explicit shifted config filename
 
 Path/name options:
-  --registered_config_name NAME    Registered config filename [TileConfiguration.registered.txt]
-  --shifted_config_name NAME       Shifted config filename [TileConfiguration.shifted.IF.txt]
   --registration_log_name NAME     Shift log filename [log_protein_registration_<stitching_workdir>.txt]
 
 Behavior options:
   --output_format FORMAT           preserve, uint8, or uint16 [preserve]
-  --rotateShifts BOOL              Rotate IF_registration shift coordinates [false]
+  --rotate_shifts BOOL             Rotate IF_registration shift coordinates [false]
   --shift_sign FLOAT               Shift direction multiplier [1.0]
+  --script_dir PATH                Directory containing p23_prepare_moveImages_tileconfig.py
   --conda_env NAME                 Conda environment name [ashlar]
   -h, --help                       Show this help and exit
 USAGE
@@ -84,18 +85,20 @@ resolve_channel_names() {
     esac
 }
 
+DEFAULT_SCRIPT_DIR="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration"
 PROJECT_ROOT=""
 PROJECT_NAME=""
 REG_DIR_SUFFIX=""
 STITCHING_WORKDIR=""
 RAWDATA_ROUND=""
 CHANNEL_MODE=""
-REGISTERED_CONFIG_NAME="TileConfiguration.registered.txt"
-SHIFTED_CONFIG_NAME="TileConfiguration.shifted.IF.txt"
+REGISTERED_CONFIG_NAME=""
+SHIFTED_CONFIG_NAME=""
 REGISTRATION_LOG_NAME=""
 OUTPUT_FORMAT="preserve"
 ROTATE_SHIFTS="false"
 SHIFT_SIGN="1.0"
+SCRIPT_DIR="$DEFAULT_SCRIPT_DIR"
 CONDA_ENV="ashlar"
 
 while [[ $# -gt 0 ]]; do
@@ -110,8 +113,9 @@ while [[ $# -gt 0 ]]; do
         --shifted_config_name) SHIFTED_CONFIG_NAME="$2"; shift 2 ;;
         --registration_log_name) REGISTRATION_LOG_NAME="$2"; shift 2 ;;
         --output_format) OUTPUT_FORMAT="$2"; shift 2 ;;
-        --rotateShifts) ROTATE_SHIFTS="$2"; shift 2 ;;
+        --rotate_shifts) ROTATE_SHIFTS="$2"; shift 2 ;;
         --shift_sign) SHIFT_SIGN="$2"; shift 2 ;;
+        --script_dir) SCRIPT_DIR="$2"; shift 2 ;;
         --conda_env) CONDA_ENV="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) echo "Error: Unknown parameter: $1" >&2; print_usage >&2; exit 1 ;;
@@ -124,6 +128,8 @@ done
 [[ -n "$STITCHING_WORKDIR" ]] || { echo "Error: --stitching_workdir is required" >&2; exit 1; }
 [[ -n "$RAWDATA_ROUND" ]] || { echo "Error: --rawdata_round is required" >&2; exit 1; }
 [[ -n "$CHANNEL_MODE" ]] || { echo "Error: --channel_mode is required" >&2; exit 1; }
+[[ -n "$REGISTERED_CONFIG_NAME" ]] || { echo "Error: --registered_config_name is required" >&2; exit 1; }
+[[ -n "$SHIFTED_CONFIG_NAME" ]] || { echo "Error: --shifted_config_name is required" >&2; exit 1; }
 
 if [[ -z "$REGISTRATION_LOG_NAME" ]]; then
     REGISTRATION_LOG_NAME="log_protein_registration_${STITCHING_WORKDIR}.txt"
@@ -135,7 +141,7 @@ RAW_ROUND_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/01_data/${RAWDATA_ROUND}"
 REGISTRATION_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/${REG_DIR_SUFFIX}"
 REGISTERED_CONFIG="${WORK_DIR}/${REGISTERED_CONFIG_NAME}"
 
-PY_SCRIPT="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/p23_prepare_moveImages_tileconfig.py"
+PY_SCRIPT="${SCRIPT_DIR}/p23_prepare_moveImages_tileconfig.py"
 LOG_DIR="logs_prepare_if_tileconfig"
 
 mkdir -p "$LOG_DIR"
@@ -166,6 +172,7 @@ echo "[PARAM] REGISTERED_CONFIG=${REGISTERED_CONFIG}"
 echo "[PARAM] OUTPUT_FORMAT=${OUTPUT_FORMAT}"
 echo "[PARAM] ROTATE_SHIFTS=${ROTATE_SHIFTS}"
 echo "[PARAM] SHIFT_SIGN=${SHIFT_SIGN}"
+echo "[PARAM] SCRIPT_DIR=${SCRIPT_DIR}"
 echo "[PARAM] CONDA_ENV=${CONDA_ENV}"
 
 PY_ARGS=(

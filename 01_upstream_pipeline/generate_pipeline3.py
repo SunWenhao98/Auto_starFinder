@@ -1,6 +1,7 @@
 import configparser
 import sys
 import math
+import shlex
 
 
 def build_array_spec(tasks, parallel_tasks):
@@ -22,6 +23,12 @@ def file_stem(value):
 
 def config_bool_string(section, key, fallback=False):
     return 'true' if section.getboolean(key, fallback=fallback) else 'false'
+
+
+def format_named_args(pairs):
+    return " \\\n".join(
+        f"--{name} {shlex.quote(str(value))}" for name, value in pairs
+    )
 
 
 def generate_shell_script(config_file):
@@ -227,124 +234,246 @@ def generate_shell_script(config_file):
             )
 
             nuclei_reg_array = build_array_spec(p['nuclei_reg_array_tasks'], p['nuclei_reg_parallel_tasks'])
-            nuclei_reg_args = (
-                f"{p['project_root']} \\\n"
-                f"{p['project_name']} {reg_dir_suffix} {p['nuclei_reg_offset']} {image_geom_args} {p['nuclei_reg_input_format']} {p['nuclei_reg_norm_out_format']} {p['nuclei_reg_aligned_round_outdir']} "
-                f"{p.get('nuclei_reg_moving_round', fallback='IF')} {p.get('nuclei_reg_channel_panel', fallback='OlympusIF')}"
-            )
-            
-            run_ashlar_21 = p.getboolean('run_ashlar_21_prepare_noRef_layout', fallback=False)
-            run_ashlar_22 = p.getboolean('run_ashlar_22_stitch_initial', fallback=False)
-            run_ashlar_23 = p.getboolean('run_ashlar_23_prepare_moveImages_tileconfig', fallback=False)
-            run_ashlar_24 = p.getboolean('run_ashlar_24_stitch_mosaic', fallback=False)
-            run_ashlar_27 = p.getboolean('run_ashlar_27_make_rgbTIF_output', fallback=False)
+            nuclei_reg_args = format_named_args((
+                ('project_root', p['project_root']),
+                ('project_name', p['project_name']),
+                ('reg_dir_suffix', reg_dir_suffix),
+                ('offset', p['nuclei_reg_offset']),
+                ('image_width', p['image_width']),
+                ('image_depth', p['image_depth']),
+                ('ref_round', p['ref_round']),
+                ('channel_num', p['channel_num']),
+                ('round_num', p['round_num']),
+                ('input_format', p['nuclei_reg_input_format']),
+                ('norm_out_format', p['nuclei_reg_norm_out_format']),
+                ('aligned_round_outdir', p['nuclei_reg_aligned_round_outdir']),
+                ('moving_round', p['nuclei_reg_moving_round']),
+                ('channel_panel', p['nuclei_reg_channel_panel']),
+                ('core_matlab_dir', p['nuclei_reg_core_matlab_dir']),
+            ))
 
-            if run_ashlar_21 or run_ashlar_22 or run_ashlar_23 or run_ashlar_24 or run_ashlar_27:
-                ashlar_21_args = (
-                    f"--project_root {p['project_root']} \\\n"
-                    f"--project_name {p['project_name']} \\\n"
-                    f"--rawdata_round {p['ashlar_21_rawdata_round']} \\\n"
-                    f"--reg_dir_suffix {reg_dir_suffix} \\\n"
-                    f"--stitching_workdir {p['ashlar_21_stitching_workdir']} \\\n"
-                    f"--channel_mode {p['ashlar_21_channel_mode']} \\\n"
-                    f"--manifest_name {p['ashlar_21_manifest_name']} \\\n"
-                    f"--link_mode {p['ashlar_21_link_mode']} \\\n"
-                    f"--output_format {p['ashlar_21_output_format']}"
-                )
+            run_prepare_layout = p.getboolean('run_prepare_layout', fallback=False)
+            run_prepare_tile_config = p.getboolean('run_prepare_tile_config', fallback=False)
+            run_fiji_stitch = p.getboolean('run_fiji_stitch', fallback=False)
+            run_ashlar_stitch = p.getboolean('run_ashlar_stitch', fallback=False)
+            run_prepare_shifted_layout = p.getboolean('run_prepare_shifted_layout', fallback=False)
+            run_ashlar_stitch_mosaic = p.getboolean('run_ashlar_stitch_mosaic', fallback=False)
+            run_fiji_stitch_mosaic = p.getboolean('run_fiji_stitch_mosaic', fallback=False)
+            run_make_rgb_tif = p.getboolean('run_make_rgb_tif', fallback=False)
+            run_mosaic_registration_python = p.getboolean('run_mosaic_registration_python', fallback=False)
+            run_mosaic_registration_matlab = p.getboolean('run_mosaic_registration_matlab', fallback=False)
+            run_mosaic_registration_compare = p.getboolean('run_mosaic_registration_compare', fallback=False)
+            fov_enabled = any((
+                p.getboolean('run_nuclei_registration', fallback=False),
+                run_prepare_layout,
+                run_prepare_tile_config,
+                run_fiji_stitch,
+                run_ashlar_stitch,
+                run_prepare_shifted_layout,
+                run_ashlar_stitch_mosaic,
+                run_fiji_stitch_mosaic,
+                run_make_rgb_tif,
+                run_mosaic_registration_python,
+                run_mosaic_registration_matlab,
+                run_mosaic_registration_compare,
+            ))
 
+            prepare_layout_args = format_named_args((
+                ('project_root', p['project_root']),
+                ('project_name', p['project_name']),
+                ('reg_dir_suffix', reg_dir_suffix),
+                ('rawdata_round', p['prepare_layout_rawdata_round']),
+                ('stitching_workdir', p['prepare_layout_stitching_workdir']),
+                ('channel_mode', p['prepare_layout_channel_mode']),
+                ('manifest_name', p['prepare_layout_manifest_name']),
+                ('link_mode', p['prepare_layout_link_mode']),
+                ('output_format', p['prepare_layout_output_format']),
+                ('script_dir', p['FovIntegration']),
+                ('conda_env', p['prepare_layout_conda_env']),
+            ))
 
-            # Stitch config 参数
-            stitch_config_args = (
-                f"{p['project_root']} \\\n"
-                f"{p['project_name']} {reg_dir_suffix} {p['stitch_config_stitching_workdir']} {p['stitch_config_source_channel_dir']} \\\n"
-                f"{p['stitch_config_match_string']} \\\n"
-                f"{p['stitch_config_pixel_size_um']} {p['stitch_config_image_xy']} {p['stitch_config_overlap_ratio']} {p['stitch_config_invert_y_flag']} \\\n"
-                f"{p['stitch_config_maf_file']} {p['stitch_config_position_offset']} {p['stitch_config_microscope']} \\\n"
-            )
+            prepare_tile_config_args = format_named_args((
+                ('project_root', p['project_root']),
+                ('project_name', p['project_name']),
+                ('reg_dir_suffix', reg_dir_suffix),
+                ('stitching_workdir', p['prepare_tile_config_stitching_workdir']),
+                ('source_channel_dir', p['prepare_tile_config_source_channel_dir']),
+                ('match_string', p['prepare_tile_config_match_string']),
+                ('pixel_size_um', p['prepare_tile_config_pixel_size_um']),
+                ('image_xy', p['prepare_tile_config_image_xy']),
+                ('overlap_ratio', p['prepare_tile_config_overlap_ratio']),
+                ('invert_y', p['prepare_tile_config_invert_y']),
+                ('maf_file', p['prepare_tile_config_maf_file']),
+                ('position_offset', p['prepare_tile_config_position_offset']),
+                ('microscope', p['prepare_tile_config_microscope']),
+                ('initial_config_name', p['prepare_tile_config_initial_config_name']),
+                ('script_dir', p['FovIntegration']),
+                ('conda_env', p['prepare_tile_config_conda_env']),
+                ('run_fiji_fusion_preflight', p['prepare_tile_config_run_fiji_fusion_preflight']),
+                ('fiji_fusion_preflight_report', p['prepare_tile_config_fiji_fusion_preflight_report']),
+            ))
 
-            # Fiji stitch 参数
             fiji_stitch_work_dir = f"{p['project_root']}/{p['project_name']}/{reg_dir_suffix}/{p['fiji_stitch_working_dir']}"
-            fiji_stitch_script_dir = f"{p['FovIntegration']}"
-            fiji_stitch_args = (
-                f"{fiji_stitch_work_dir} \\\n"
-                f"{p['fiji_stitch_grid_x']} {p['fiji_stitch_grid_y']} {p['fiji_stitch_first_index']} \\\n"
-                f"{fiji_stitch_script_dir} \\\n"
-                f"{p['fiji_stitch_stitch_pattern']} \\\n"
-                f"{p['fiji_stitch_source_channel']} \\\n"
+            fiji_stitch_args = format_named_args((
+                ('work_dir', fiji_stitch_work_dir),
+                ('source_channel', p['fiji_stitch_source_channel']),
+                ('grid_x', p['fiji_stitch_grid_x']),
+                ('grid_y', p['fiji_stitch_grid_y']),
+                ('first_index', p['fiji_stitch_first_index']),
+                ('stitch_pattern', p['fiji_stitch_stitch_pattern']),
+                ('initial_config_name', p['fiji_stitch_initial_config_name']),
+                ('layout_file', p['fiji_stitch_layout_file']),
+                ('registered_config_name', p['fiji_stitch_registered_config_name']),
+                ('run_fiji_fusion_preflight', p['fiji_stitch_run_fiji_fusion_preflight']),
+                ('fiji_fusion_preflight_report', p['fiji_stitch_fiji_fusion_preflight_report']),
+                ('output_name', p['fiji_stitch_output_name']),
+                ('output_textfile_name', p['fiji_stitch_output_textfile_name']),
+                ('regression_threshold', p['fiji_stitch_regression_threshold']),
+                ('max_avg_displacement_threshold', p['fiji_stitch_max_avg_displacement_threshold']),
+                ('absolute_displacement_threshold', p['fiji_stitch_absolute_displacement_threshold']),
+                ('fusion_method', p['fiji_stitch_fusion_method']),
+                ('compute_overlap', p['fiji_stitch_compute_overlap']),
+                ('subpixel_accuracy', p['fiji_stitch_subpixel_accuracy']),
+                ('computation_parameters', p['fiji_stitch_computation_parameters']),
+                ('image_output', p['fiji_stitch_image_output']),
+                ('save_format', p['fiji_stitch_save_format']),
+                ('script_dir', p['FovIntegration']),
+                ('fiji_executable', p['fiji_executable']),
+                ('conda_env', p['fiji_conda_env']),
+                ('dry_run', 'false'),
+            ))
+
+            ashlar_stitch_args = format_named_args((
+                ('project_root', p['project_root']),
+                ('project_name', p['project_name']),
+                ('reg_dir_suffix', reg_dir_suffix),
+                ('source_channel_dir', p['ashlar_stitch_source_channel_dir']),
+                ('stitching_round', p['ashlar_stitch_stitching_round']),
+                ('config_name', p['ashlar_stitch_config_name']),
+                ('registered_config_name', p['ashlar_stitch_registered_config_name']),
+                ('stitch_result_dirname', p['ashlar_stitch_result_dirname']),
+                ('output_prefix', p['ashlar_stitch_output_prefix']),
+                ('make_3d', p['ashlar_stitch_make_3d']),
+                ('rotate90', p['ashlar_stitch_rotate90']),
+                ('rotate_positions', p['ashlar_stitch_rotate_positions']),
+                ('pixel_size_um', p['ashlar_stitch_pixel_size_um']),
+                ('max_shift_px', p['ashlar_stitch_max_shift_px']),
+                ('filter_sigma', p['ashlar_stitch_filter_sigma']),
+                ('stitch_alpha', p['ashlar_stitch_alpha']),
+                ('max_error', p['ashlar_stitch_max_error']),
+                ('slice_indices', p['ashlar_stitch_slice_indices']),
+                ('script_dir', p['FovIntegration']),
+                ('conda_env', p['ashlar_conda_env']),
+            ))
+
+            prepare_shifted_layout_args = format_named_args((
+                ('project_root', p['project_root']),
+                ('project_name', p['project_name']),
+                ('reg_dir_suffix', reg_dir_suffix),
+                ('stitching_workdir', p['prepare_shifted_layout_stitching_workdir']),
+                ('rawdata_round', p['prepare_shifted_layout_rawdata_round']),
+                ('channel_mode', p['prepare_shifted_layout_channel_mode']),
+                ('registered_config_name', p['prepare_shifted_layout_registered_config_name']),
+                ('shifted_config_name', p['prepare_shifted_layout_shifted_config_name']),
+                ('registration_log_name', p['prepare_shifted_layout_registration_log_name']),
+                ('output_format', p['prepare_shifted_layout_output_format']),
+                ('rotate_shifts', p['prepare_shifted_layout_rotate_shifts']),
+                ('shift_sign', p['prepare_shifted_layout_shift_sign']),
+                ('script_dir', p['FovIntegration']),
+                ('conda_env', p['ashlar_conda_env']),
+            ))
+
+            ashlar_mosaic_args = format_named_args((
+                ('project_root', p['project_root']),
+                ('project_name', p['project_name']),
+                ('reg_dir_suffix', reg_dir_suffix),
+                ('stitching_workdir', p['ashlar_mosaic_stitching_workdir']),
+                ('channel_mode', p['ashlar_mosaic_channel_mode']),
+                ('config_for_mosaic_stitch', p['ashlar_mosaic_config_for_mosaic_stitch']),
+                ('channel_dir_prefix', p['ashlar_mosaic_channel_dir_prefix']),
+                ('stitch_result_dirname', p['ashlar_mosaic_stitch_result_dirname']),
+                ('output_prefix', p['ashlar_mosaic_output_prefix']),
+                ('output_format', p['ashlar_mosaic_output_format']),
+                ('rotate_images', p['ashlar_mosaic_rotate_images']),
+                ('make_3d', p['ashlar_mosaic_make_3d']),
+                ('pixel_size_um', p['ashlar_mosaic_pixel_size_um']),
+                ('slice_indices', p['ashlar_mosaic_slice_indices']),
+                ('script_dir', p['FovIntegration']),
+                ('conda_env', p['ashlar_conda_env']),
+            ))
+
+            fiji_mosaic_work_dir = f"{p['project_root']}/{p['project_name']}/{reg_dir_suffix}/{p['fiji_mosaic_stitching_workdir']}"
+            fiji_mosaic_args = format_named_args((
+                ('work_dir', fiji_mosaic_work_dir),
+                ('config_file', p['fiji_mosaic_config_file']),
+                ('channel_mode', p['fiji_mosaic_channel_mode']),
+                ('channel_names', p['fiji_mosaic_channel_names']),
+                ('channel_dir_prefix', p['fiji_mosaic_channel_dir_prefix']),
+                ('output_prefix', p['fiji_mosaic_output_prefix']),
+                ('stitch_pattern', p['fiji_mosaic_stitch_pattern']),
+                ('layout_file', p['fiji_mosaic_layout_file']),
+                ('fusion_method', p['fiji_mosaic_fusion_method']),
+                ('subpixel_accuracy', p['fiji_mosaic_subpixel_accuracy']),
+                ('image_output', p['fiji_mosaic_image_output']),
+                ('save_format', p['fiji_mosaic_save_format']),
+                ('script_dir', p['FovIntegration']),
+                ('fiji_executable', p['fiji_executable']),
+                ('conda_env', p['fiji_conda_env']),
+                ('dry_run', 'false'),
+            ))
+
+            rgb_tif_args = format_named_args((
+                ('red_image', p['rgb_tif_red_image']),
+                ('green_image', p['rgb_tif_green_image']),
+                ('output_image', p['rgb_tif_output_image']),
+                ('rescale_to_uint8', p['rgb_tif_rescale_to_uint8']),
+                ('percentile_min', p['rgb_tif_percentile_min']),
+                ('percentile_max', p['rgb_tif_percentile_max']),
+                ('script_dir', p['FovIntegration']),
+                ('conda_env', p['ashlar_conda_env']),
+            ))
+
+            mosaic_registration_common_args = (
+                ('fixed_mosaic', p['mosaic_registration_fixed_mosaic']),
+                ('moving_mosaic', p['mosaic_registration_moving_mosaic']),
+                ('output_prefix', p['mosaic_registration_output_prefix']),
+                ('script_dir', p['FovIntegration']),
+                ('conda_env', p['mosaic_registration_conda_env']),
+                ('overview_downsample', p['mosaic_registration_overview_downsample']),
+                ('overview_block_px', p['mosaic_registration_overview_block_px']),
+                ('roi_size_px', p['mosaic_registration_roi_size_px']),
+                ('roi_count', p['mosaic_registration_roi_count']),
+                ('min_valid_rois', p['mosaic_registration_min_valid_rois']),
+                ('min_overlap_ratio', p['mosaic_registration_min_overlap_ratio']),
+                ('max_roi_spread_px', p['mosaic_registration_max_roi_spread_px']),
+                ('tile_size_px', p['mosaic_registration_tile_size_px']),
+                ('interpolation_order', p['mosaic_registration_interpolation_order']),
+                ('preview_downsample', p['mosaic_registration_preview_downsample']),
+                ('compression', p['mosaic_registration_compression']),
+                ('overwrite', p['mosaic_registration_overwrite']),
+                ('dry_run', 'false'),
             )
-
-            # Fiji stitch VisualCheck 参数
-            fiji_stitch_visualCheck_if_dir = f"{p['project_root']}/{p['project_name']}/{reg_dir_suffix}/{p['nuclei_reg_aligned_round_outdir']}"
-            fiji_stitch_visualCheck_script_dir = f"{p['FovIntegration']}"
-            fiji_stitch_visualCheck_args = (
-                f"{fiji_stitch_visualCheck_if_dir} \\\n"
-                f"{p['fiji_stitch_visualCheck_grid_x']} {p['fiji_stitch_visualCheck_grid_y']} {p['fiji_stitch_visualCheck_first_index']} \\\n"
-                f"{fiji_stitch_visualCheck_script_dir} \\\n"
-                f"{p['fiji_stitch_visualCheck_stitch_pattern']} \\\n"
+            mosaic_registration_python_args = format_named_args(
+                mosaic_registration_common_args + (
+                    ('upsample_factor', p['mosaic_registration_upsample_factor']),
+                )
             )
-
-            if run_ashlar_21 or run_ashlar_22 or run_ashlar_23 or run_ashlar_24 or run_ashlar_27:
-                ashlar_22_args = (
-                    f"--project_root {p['project_root']} \\\n"
-                    f"--project_name {p['project_name']} \\\n"
-                    f"--reg_dir_suffix {reg_dir_suffix} \\\n"
-                    f"--source_channel_dir {p['ashlar_22_source_channel_dir']} \\\n"
-                    f"--stitching_round {p['ashlar_22_stitching_round']} \\\n"
-                    f"--config_name {p['ashlar_22_config_name']} \\\n"
-                    f"--registered_config_name {p['ashlar_22_registered_config_name']} \\\n"
-                    f"--stitch_result_dirname {p['ashlar_22_stitch_result_dirname']} \\\n"
-                    f"--output_prefix {p['ashlar_22_output_prefix']} \\\n"
-                    f"--make_3d {p['ashlar_22_make_3d']} \\\n"
-                    f"--rotate90 {p['ashlar_22_rotate90']} \\\n"
-                    f"--rotate_positions {p['ashlar_22_rotate_positions']} \\\n"
-                    f"--pixel_size_um {p['ashlar_22_pixel_size_um']} \\\n"
-                    f"--max_shift_px {p['ashlar_22_max_shift_px']} \\\n"
-                    f"--filter_sigma {p['ashlar_22_filter_sigma']} \\\n"
-                    f"--stitch_alpha {p['ashlar_22_stitch_alpha']} \\\n"
-                    f"--max_error {p['ashlar_22_max_error']} \\\n"
-                    f"--slice_indices '{p['ashlar_22_slice_indices']}'"
+            mosaic_registration_matlab_args = format_named_args(
+                mosaic_registration_common_args + (
+                    ('dft_helper_dir', p['mosaic_registration_dft_helper_dir']),
                 )
-
-                ashlar_23_args = (
-                    f"--project_root {p['project_root']} \\\n"
-                    f"--project_name {p['project_name']} \\\n"
-                    f"--reg_dir_suffix {reg_dir_suffix} \\\n"
-                    f"--stitching_workdir {p['ashlar_23_stitching_workdir']} \\\n"
-                    f"--rawdata_round {p['ashlar_23_rawdata_round']} \\\n"
-                    f"--channel_mode {p['ashlar_23_channel_mode']} \\\n"
-                    f"--registered_config_name {p['ashlar_23_registered_config_name']} \\\n"
-                    f"--shifted_config_name {p['ashlar_23_shifted_config_name']} \\\n"
-                    f"--registration_log_name {p['ashlar_23_registration_log_name']} \\\n"
-                    f"--output_format {p['ashlar_23_output_format']} \\\n"
-                    f"--rotateShifts {p['ashlar_23_rotateShifts']} \\\n"
-                    f"--shift_sign {p['ashlar_23_shift_sign']}"
-                )
-
-                ashlar_24_args = (
-                    f"--project_root {p['project_root']} \\\n"
-                    f"--project_name {p['project_name']} \\\n"
-                    f"--reg_dir_suffix {reg_dir_suffix} \\\n"
-                    f"--stitching_workdir {p['ashlar_24_stitching_workdir']} \\\n"
-                    f"--channel_mode {p['ashlar_24_channel_mode']} \\\n"
-                    f"--config_for_mosaic_stitch {p['ashlar_24_config_for_mosaic_stitch']} \\\n"
-                    f"--channel_dir_prefix {p['ashlar_24_channel_dir_prefix']} \\\n"
-                    f"--stitch_result_dirname {p['ashlar_24_stitch_result_dirname']} \\\n"
-                    f"--output_prefix {p['ashlar_24_output_prefix']} \\\n"
-                    f"--output_format {p['ashlar_24_output_format']} \\\n"
-                    f"--rotateImages {p['ashlar_24_rotateImages']} \\\n"
-                    f"--make_3d {p['ashlar_24_make_3d']} \\\n"
-                    f"--pixel_size_um {p['ashlar_24_pixel_size_um']} \\\n"
-                    f"--slice_indices {p['ashlar_24_slice_indices']}"
-                )
-
-                ashlar_27_args = (
-                    f"--red_image {p['ashlar_27_red_image']} \\\n"
-                    f"--green_image {p['ashlar_27_green_image']} \\\n"
-                    f"--output_image {p['ashlar_27_output_image']} \\\n"
-                    f"--rescale_to_uint8 {p['ashlar_27_rescale_to_uint8']} \\\n"
-                    f"--percentile_min {p['ashlar_27_percentile_min']} \\\n"
-                    f"--percentile_max {p['ashlar_27_percentile_max']}"
-                )
+            )
+            mosaic_registration_compare_args = format_named_args((
+                ('python_json', f"{p['mosaic_registration_output_prefix']}.python.transform.json"),
+                ('matlab_json', f"{p['mosaic_registration_output_prefix']}.matlab.transform.json"),
+                ('output_prefix', p['mosaic_registration_output_prefix']),
+                ('agreement_tolerance_px', p['mosaic_registration_agreement_tolerance_px']),
+                ('fail_on_disagreement', p['mosaic_registration_fail_on_disagreement']),
+                ('script_dir', p['FovIntegration']),
+                ('conda_env', p['mosaic_registration_conda_env']),
+                ('overwrite', p['mosaic_registration_overwrite']),
+                ('dry_run', 'false'),
+            ))
 
 
             dapi_cp_array = build_array_spec(p['dapi_cp_array_tasks'], p['dapi_cp_parallel_tasks'])
@@ -801,103 +930,140 @@ def generate_shell_script(config_file):
                 print(f"echo \"Submitted Step(Decode Pairwise Corr): ${{{JOB_ID_VAR}}}\"\n")
 
 
-        if p.getboolean('run_nuclei_registration') or p.getboolean('run_Fiji_stitch') or p.getboolean('run_stitch_config') or p.getboolean('run_Fiji_stitch_visualCheck'):
-            print(f"\n# --- Job {job_counter}: {section_name} ({p['job_suffix']}) - Nuclei registration && stitching ---")
-            print(f"echo \"Starting Job {job_counter}: {p['job_suffix']} (Nuclei registration && stitching)\"")
+        if fov_enabled:
+            print(f"\n# --- Job {job_counter}: {section_name} ({p['job_suffix']}) - FOV integration ---")
+            print(f"echo \"Starting Job {job_counter}: {p['job_suffix']} (FOV integration)\"")
             print(f"mkdir -p {stitch_work_dir}")
             print(f"cd {stitch_work_dir} || {{ echo 'Failed to cd into {stitch_work_dir}'; exit 1; }}\n")
 
         if p.getboolean('run_nuclei_registration'):
-            cmd_s6 = f"sbatch --array={nuclei_reg_array} -p {p['nuclei_reg_partition']} -c {p['nuclei_reg_cpus']} {dependency_str} {p['script_nuclei_registration']} \\\n{nuclei_reg_args}"
-            print(f"# Submit step: Nuclei-based Registration")
-            print(f"{JOB_OUT_VAR}=$(\\")
+            cmd_s6 = f"sbatch --parsable --array={nuclei_reg_array} -p {p['nuclei_reg_partition']} -c {p['nuclei_reg_cpus']} {dependency_str} {shlex.quote(p['script_nuclei_registration'])} \\\n{nuclei_reg_args}"
+            print("# Submit step: Nuclei-based Registration")
+            print(f"{JOB_ID_VAR}=$(\\")
             print(f"{cmd_s6})")
-            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
+            print(f"{JOB_ID_VAR}=${{{JOB_ID_VAR}%%;*}}")
             print(f"echo \"Submitted Step(Nuclei-based Registration): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
 
-        if run_ashlar_21:
-            print(f"\n# --- Job {job_counter}: {section_name} ({p['job_suffix']}) - Ashlar 21 prepare noRef layout ---")
-            print(f"echo \"Starting Job {job_counter}: {p['job_suffix']} (Ashlar 21 prepare noRef layout)\"")
-            print(f"mkdir -p {stitch_work_dir}")
-            print(f"cd {stitch_work_dir} || {{ echo 'Failed to cd into {stitch_work_dir}'; exit 1; }}\n")
-
-            cmd_ashlar_21 = f"sbatch -p {p['ashlar_21_partition']} -c {p['ashlar_21_cpus']} --mem {p['ashlar_21_mem']} {dependency_str} {p['script_ashlar_21_prepare_noRef_layout']} \\\n{ashlar_21_args}"
-            print(f"# Submit step: Ashlar 21 prepare noRef layout")
-            print(f"{JOB_OUT_VAR}=$(\\")
-            print(f"{cmd_ashlar_21})")
-            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
-            print(f"echo \"Submitted Step(Ashlar 21 prepare noRef layout): ${{{JOB_ID_VAR}}}\"\n")
+        if run_prepare_layout:
+            cmd_prepare_layout = f"sbatch --parsable -p {p['prepare_layout_partition']} -c {p['prepare_layout_cpus']} {dependency_str} {shlex.quote(p['script_prepare_layout'])} \\\n{prepare_layout_args}"
+            print("# Submit step: Prepare Layout")
+            print(f"{JOB_ID_VAR}=$(\\")
+            print(f"{cmd_prepare_layout})")
+            print(f"{JOB_ID_VAR}=${{{JOB_ID_VAR}%%;*}}")
+            print(f"echo \"Submitted Step(Prepare Layout): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
 
-        if p.getboolean('run_stitch_config'):
-            cmd_s7_0 = f"sbatch -p {p['stitch_config_partition']} -c {p['stitch_config_cpus']} --mem {p['stitch_config_mem']} {dependency_str} {p['script_stitch_config']} \\\n{stitch_config_args}"
-            print(f"# Submit step: Stitch Config")
-            print(f"{JOB_OUT_VAR}=$(\\")
-            print(f"{cmd_s7_0})")
-            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
-            print(f"echo \"Submitted Step(Stitch Config): ${{{JOB_ID_VAR}}}\"\n")
+        if run_prepare_tile_config:
+            cmd_prepare_tile_config = f"sbatch --parsable -p {p['prepare_tile_config_partition']} -c {p['prepare_tile_config_cpus']} {dependency_str} {shlex.quote(p['script_prepare_tile_config'])} \\\n{prepare_tile_config_args}"
+            print("# Submit step: Prepare TileConfiguration")
+            print(f"{JOB_ID_VAR}=$(\\")
+            print(f"{cmd_prepare_tile_config})")
+            print(f"{JOB_ID_VAR}=${{{JOB_ID_VAR}%%;*}}")
+            print(f"echo \"Submitted Step(Prepare TileConfiguration): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
 
-        if p.getboolean('run_Fiji_stitch'):
-            cmd_s7 = f"sbatch -p {p['fiji_stitch_partition']} -c {p['fiji_stitch_cpus']} --mem {p['fiji_stitch_mem']} {dependency_str} {p['script_Fiji_stitch']} \\\n{fiji_stitch_args}"
-            print(f"# Submit step: Fiji Stitch")
-            print(f"{JOB_OUT_VAR}=$(\\")
-            print(f"{cmd_s7})")
-            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
+        if run_fiji_stitch:
+            cmd_fiji_stitch = f"sbatch --parsable -p {p['fiji_stitch_partition']} -c {p['fiji_stitch_cpus']} {dependency_str} {shlex.quote(p['script_fiji_stitch'])} \\\n{fiji_stitch_args}"
+            print("# Submit step: Fiji Stitch")
+            print(f"{JOB_ID_VAR}=$(\\")
+            print(f"{cmd_fiji_stitch})")
+            print(f"{JOB_ID_VAR}=${{{JOB_ID_VAR}%%;*}}")
             print(f"echo \"Submitted Step(Fiji Stitch): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
-        
-        if p.getboolean('run_Fiji_stitch_visualCheck'):
-            cmd_s8 = f"sbatch -p {p['fiji_stitch_visualCheck_partition']} -c {p['fiji_stitch_visualCheck_cpus']} --mem {p['fiji_stitch_visualCheck_mem']} {dependency_str} {p['script_Fiji_stitch_visualCheck']} \\\n{fiji_stitch_visualCheck_args}"
-            print(f"# Submit step: Fiji Stitch Visual Check")
-            print(f"{JOB_OUT_VAR}=$(\\")
-            print(f"{cmd_s8})")
-            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
-            print(f"echo \"Submitted Step(Fiji Stitch Visual Check): ${{{JOB_ID_VAR}}}\"\n")
+
+        if run_ashlar_stitch:
+            cmd_ashlar_stitch = f"sbatch --parsable -p {p['ashlar_stitch_partition']} -c {p['ashlar_stitch_cpus']} {dependency_str} {shlex.quote(p['script_ashlar_stitch'])} \\\n{ashlar_stitch_args}"
+            print("# Submit step: Ashlar Stitch")
+            print(f"{JOB_ID_VAR}=$(\\")
+            print(f"{cmd_ashlar_stitch})")
+            print(f"{JOB_ID_VAR}=${{{JOB_ID_VAR}%%;*}}")
+            print(f"echo \"Submitted Step(Ashlar Stitch): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
 
-        if run_ashlar_22 or run_ashlar_23 or run_ashlar_24 or run_ashlar_27:
-            print(f"\n# --- Job {job_counter}: {section_name} ({p['job_suffix']}) - Ashlar FOV stitching ---")
-            print(f"echo \"Starting Job {job_counter}: {p['job_suffix']} (Ashlar FOV stitching)\"")
-            print(f"mkdir -p {stitch_work_dir}")
-            print(f"cd {stitch_work_dir} || {{ echo 'Failed to cd into {stitch_work_dir}'; exit 1; }}\n")
-
-        if run_ashlar_22:
-            cmd_ashlar_22 = f"sbatch -p {p['ashlar_22_partition']} -c {p['ashlar_22_cpus']} --mem {p['ashlar_22_mem']} {dependency_str} {p['script_ashlar_22_stitch_initial']} \\\n{ashlar_22_args}"
-            print(f"# Submit step: Ashlar 22 stitch initial")
-            print(f"{JOB_OUT_VAR}=$(\\")
-            print(f"{cmd_ashlar_22})")
-            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
-            print(f"echo \"Submitted Step(Ashlar 22 stitch initial): ${{{JOB_ID_VAR}}}\"\n")
+        if run_prepare_shifted_layout:
+            cmd_prepare_shifted_layout = f"sbatch --parsable -p {p['prepare_shifted_layout_partition']} -c {p['prepare_shifted_layout_cpus']} {dependency_str} {shlex.quote(p['script_prepare_shifted_layout'])} \\\n{prepare_shifted_layout_args}"
+            print("# Submit step: Prepare Shifted Layout")
+            print(f"{JOB_ID_VAR}=$(\\")
+            print(f"{cmd_prepare_shifted_layout})")
+            print(f"{JOB_ID_VAR}=${{{JOB_ID_VAR}%%;*}}")
+            print(f"echo \"Submitted Step(Prepare Shifted Layout): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
 
-        if run_ashlar_23:
-            cmd_ashlar_23 = f"sbatch -p {p['ashlar_23_partition']} -c {p['ashlar_23_cpus']} --mem {p['ashlar_23_mem']} {dependency_str} {p['script_ashlar_23_prepare_moveImages_tileconfig']} \\\n{ashlar_23_args}"
-            print(f"# Submit step: Ashlar 23 prepare moveImages tileconfig")
-            print(f"{JOB_OUT_VAR}=$(\\")
-            print(f"{cmd_ashlar_23})")
-            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
-            print(f"echo \"Submitted Step(Ashlar 23 prepare moveImages tileconfig): ${{{JOB_ID_VAR}}}\"\n")
+        if run_ashlar_stitch_mosaic:
+            cmd_ashlar_mosaic = f"sbatch --parsable -p {p['ashlar_mosaic_partition']} -c {p['ashlar_mosaic_cpus']} {dependency_str} {shlex.quote(p['script_ashlar_stitch_mosaic'])} \\\n{ashlar_mosaic_args}"
+            print("# Submit step: Ashlar Stitch Mosaic")
+            print(f"{JOB_ID_VAR}=$(\\")
+            print(f"{cmd_ashlar_mosaic})")
+            print(f"{JOB_ID_VAR}=${{{JOB_ID_VAR}%%;*}}")
+            print(f"echo \"Submitted Step(Ashlar Stitch Mosaic): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
 
-        if run_ashlar_24:
-            cmd_ashlar_24 = f"sbatch -p {p['ashlar_24_partition']} -c {p['ashlar_24_cpus']} --mem {p['ashlar_24_mem']} {dependency_str} {p['script_ashlar_24_stitch_mosaic']} \\\n{ashlar_24_args}"
-            print(f"# Submit step: Ashlar 24 stitch mosaic")
-            print(f"{JOB_OUT_VAR}=$(\\")
-            print(f"{cmd_ashlar_24})")
-            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
-            print(f"echo \"Submitted Step(Ashlar 24 stitch mosaic): ${{{JOB_ID_VAR}}}\"\n")
+        if run_fiji_stitch_mosaic:
+            cmd_fiji_mosaic = f"sbatch --parsable -p {p['fiji_mosaic_partition']} -c {p['fiji_mosaic_cpus']} {dependency_str} {shlex.quote(p['script_fiji_stitch_mosaic'])} \\\n{fiji_mosaic_args}"
+            print("# Submit step: Fiji Stitch Mosaic")
+            print(f"{JOB_ID_VAR}=$(\\")
+            print(f"{cmd_fiji_mosaic})")
+            print(f"{JOB_ID_VAR}=${{{JOB_ID_VAR}%%;*}}")
+            print(f"echo \"Submitted Step(Fiji Stitch Mosaic): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
 
-        if run_ashlar_27:
-            cmd_ashlar_27 = f"sbatch -p {p['ashlar_27_partition']} -c {p['ashlar_27_cpus']} --mem {p['ashlar_27_mem']} {dependency_str} {p['script_ashlar_27_make_rgbTIF_output']} \\\n{ashlar_27_args}"
-            print(f"# Submit step: Ashlar 27 make RGB TIF output")
-            print(f"{JOB_OUT_VAR}=$(\\")
-            print(f"{cmd_ashlar_27})")
-            print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
-            print(f"echo \"Submitted Step(Ashlar 27 make RGB TIF output): ${{{JOB_ID_VAR}}}\"\n")
+        if run_make_rgb_tif:
+            cmd_rgb_tif = f"sbatch --parsable -p {p['rgb_tif_partition']} -c {p['rgb_tif_cpus']} {dependency_str} {shlex.quote(p['script_make_rgb_tif'])} \\\n{rgb_tif_args}"
+            print("# Submit step: Make RGB TIF")
+            print(f"{JOB_ID_VAR}=$(\\")
+            print(f"{cmd_rgb_tif})")
+            print(f"{JOB_ID_VAR}=${{{JOB_ID_VAR}%%;*}}")
+            print(f"echo \"Submitted Step(Make RGB TIF): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
+
+        if run_mosaic_registration_python or run_mosaic_registration_matlab or run_mosaic_registration_compare:
+            registration_log_dirs = []
+            if run_mosaic_registration_python:
+                registration_log_dirs.append('logs025_mosaic_registration')
+            if run_mosaic_registration_matlab:
+                registration_log_dirs.append('logs026_mosaic_registration')
+            if run_mosaic_registration_compare:
+                registration_log_dirs.append('logs028_mosaic_registration')
+            print("mkdir -p " + " ".join(registration_log_dirs))
+            registration_parent_dependency = dependency_str
+            registration_job_vars = []
+
+            if run_mosaic_registration_python:
+                cmd_mosaic_python = f"sbatch --parsable -p {p['mosaic_registration_python_partition']} -c {p['mosaic_registration_python_cpus']} {registration_parent_dependency} {shlex.quote(p['script_mosaic_registration_python'])} \\\n{mosaic_registration_python_args}"
+                print("# Submit step: Mosaic Registration Python")
+                print("MOSAIC_PY_JOB_ID=$(\\")
+                print(f"{cmd_mosaic_python})")
+                print("MOSAIC_PY_JOB_ID=${MOSAIC_PY_JOB_ID%%;*}")
+                print('echo "Submitted Step(Mosaic Registration Python): ${MOSAIC_PY_JOB_ID}"\n')
+                registration_job_vars.append('MOSAIC_PY_JOB_ID')
+
+            if run_mosaic_registration_matlab:
+                cmd_mosaic_matlab = f"sbatch --parsable -p {p['mosaic_registration_matlab_partition']} -c {p['mosaic_registration_matlab_cpus']} {registration_parent_dependency} {shlex.quote(p['script_mosaic_registration_matlab'])} \\\n{mosaic_registration_matlab_args}"
+                print("# Submit step: Mosaic Registration Matlab")
+                print("MOSAIC_MATLAB_JOB_ID=$(\\")
+                print(f"{cmd_mosaic_matlab})")
+                print("MOSAIC_MATLAB_JOB_ID=${MOSAIC_MATLAB_JOB_ID%%;*}")
+                print('echo "Submitted Step(Mosaic Registration Matlab): ${MOSAIC_MATLAB_JOB_ID}"\n')
+                registration_job_vars.append('MOSAIC_MATLAB_JOB_ID')
+
+            if registration_job_vars:
+                registration_dependency = "--dependency=afterok:" + ":".join(
+                    f"${{{name}}}" for name in registration_job_vars
+                )
+            else:
+                registration_dependency = registration_parent_dependency
+
+            if run_mosaic_registration_compare:
+                cmd_mosaic_compare = f"sbatch --parsable -p {p['mosaic_registration_compare_partition']} -c {p['mosaic_registration_compare_cpus']} {registration_dependency} {shlex.quote(p['script_mosaic_registration_compare'])} \\\n{mosaic_registration_compare_args}"
+                print("# Submit step: Compare Mosaic Registration")
+                print("MOSAIC_COMPARE_JOB_ID=$(\\")
+                print(f"{cmd_mosaic_compare})")
+                print("MOSAIC_COMPARE_JOB_ID=${MOSAIC_COMPARE_JOB_ID%%;*}")
+                print('echo "Submitted Step(Compare Mosaic Registration): ${MOSAIC_COMPARE_JOB_ID}"\n')
+                dependency_str = "--dependency=afterok:${MOSAIC_COMPARE_JOB_ID}"
+            elif registration_job_vars:
+                dependency_str = registration_dependency
 
         if p.getboolean('run_dapi_cellpose'):
             print(f"\n# --- Job {job_counter}: {section_name} ({p['job_suffix']}) - DAPI Cellpose Segmentation ---")

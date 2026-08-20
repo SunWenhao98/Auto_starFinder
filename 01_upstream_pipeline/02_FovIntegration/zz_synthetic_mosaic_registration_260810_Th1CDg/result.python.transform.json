@@ -1,0 +1,298 @@
+{
+  "schema_name": "starfinder_translation_registration",
+  "schema_version": "1.0",
+  "transform_type": "translation_2d",
+  "mapping": "moving_to_reference",
+  "coordinate_system": {
+    "axis_order": "xy",
+    "units": "pixel",
+    "pixel_origin": "zero_based",
+    "x_axis": "image_column_increasing_right",
+    "y_axis": "image_row_increasing_down",
+    "formula": {
+      "x_ref": "x_moving + shift_x_px",
+      "y_ref": "y_moving + shift_y_px"
+    }
+  },
+  "transform": {
+    "shift_x_px": -17.15,
+    "shift_y_px": 13.5
+  },
+  "quality": {
+    "status": "PASS",
+    "coarse_shift_x_px": 0.0,
+    "coarse_shift_y_px": 0.0,
+    "coarse_registration_error": null,
+    "estimated_overlap_ratio": 0.9565217391304348,
+    "n_rois_requested": 9,
+    "n_rois_valid": 9,
+    "n_rois_inlier": 9,
+    "roi_shift_mad_px": 0.029289321881335623,
+    "roi_shift_spread_px": 0.20615528128087218
+  },
+  "roi_results": [
+    {
+      "roi_index": 0,
+      "fixed_origin_yx": [
+        166,
+        102
+      ],
+      "moving_origin_yx": [
+        166,
+        102
+      ],
+      "size_yx": [
+        192,
+        192
+      ],
+      "local_shift_y_px": 13.45,
+      "local_shift_x_px": -17.25,
+      "global_shift_y_px": 13.449999999999989,
+      "global_shift_x_px": -17.25,
+      "registration_error": 1.0,
+      "phase_difference": -0.0029458352614244727,
+      "fixed_valid_ratio": 1.0,
+      "moving_valid_ratio": 1.0,
+      "texture_score": 7644.190625079553,
+      "inlier": true
+    },
+    {
+      "roi_index": 1,
+      "fixed_origin_yx": [
+        250,
+        102
+      ],
+      "moving_origin_yx": [
+        250,
+        102
+      ],
+      "size_yx": [
+        192,
+        192
+      ],
+      "local_shift_y_px": 13.45,
+      "local_shift_x_px": -17.1,
+      "global_shift_y_px": 13.449999999999989,
+      "global_shift_x_px": -17.099999999999994,
+      "registration_error": 1.0,
+      "phase_difference": 0.001242941710274619,
+      "fixed_valid_ratio": 1.0,
+      "moving_valid_ratio": 1.0,
+      "texture_score": 7581.2182575701845,
+      "inlier": true
+    },
+    {
+      "roi_index": 2,
+      "fixed_origin_yx": [
+        166,
+        0
+      ],
+      "moving_origin_yx": [
+        166,
+        0
+      ],
+      "size_yx": [
+        192,
+        192
+      ],
+      "local_shift_y_px": 13.4,
+      "local_shift_x_px": -17.15,
+      "global_shift_y_px": 13.400000000000006,
+      "global_shift_x_px": -17.15,
+      "registration_error": 1.0,
+      "phase_difference": 0.003586717881500615,
+      "fixed_valid_ratio": 1.0,
+      "moving_valid_ratio": 0.90625,
+      "texture_score": 7456.194205836439,
+      "inlier": true
+    },
+    {
+      "roi_index": 3,
+      "fixed_origin_yx": [
+        250,
+        0
+      ],
+      "moving_origin_yx": [
+        250,
+        0
+      ],
+      "size_yx": [
+        192,
+        192
+      ],
+      "local_shift_y_px": 13.7,
+      "local_shift_x_px": -17.2,
+      "global_shift_y_px": 13.699999999999989,
+      "global_shift_x_px": -17.2,
+      "registration_error": 1.0,
+      "phase_difference": 0.0009326904095379676,
+      "fixed_valid_ratio": 1.0,
+      "moving_valid_ratio": 0.90625,
+      "texture_score": 7290.031163820313,
+      "inlier": true
+    },
+    {
+      "roi_index": 4,
+      "fixed_origin_yx": [
+        333,
+        0
+      ],
+      "moving_origin_yx": [
+        333,
+        0
+      ],
+      "size_yx": [
+        192,
+        192
+      ],
+      "local_shift_y_px": 13.65,
+      "local_shift_x_px": -17.15,
+      "global_shift_y_px": 13.649999999999977,
+      "global_shift_x_px": -17.15,
+      "registration_error": 1.0,
+      "phase_difference": -0.0006011388288403124,
+      "fixed_valid_ratio": 1.0,
+      "moving_valid_ratio": 0.90625,
+      "texture_score": 7154.203562463852,
+      "inlier": true
+    },
+    {
+      "roi_index": 5,
+      "fixed_origin_yx": [
+        250,
+        205
+      ],
+      "moving_origin_yx": [
+        250,
+        205
+      ],
+      "size_yx": [
+        192,
+        192
+      ],
+      "local_shift_y_px": 13.5,
+      "local_shift_x_px": -17.25,
+      "global_shift_y_px": 13.5,
+      "global_shift_x_px": -17.25,
+      "registration_error": 1.0,
+      "phase_difference": 0.0021491041030569135,
+      "fixed_valid_ratio": 1.0,
+      "moving_valid_ratio": 1.0,
+      "texture_score": 6923.1482466659045,
+      "inlier": true
+    },
+    {
+      "roi_index": 6,
+      "fixed_origin_yx": [
+        83,
+        0
+      ],
+      "moving_origin_yx": [
+        83,
+        0
+      ],
+      "size_yx": [
+        192,
+        192
+      ],
+      "local_shift_y_px": 13.4,
+      "local_shift_x_px": -17.2,
+      "global_shift_y_px": 13.400000000000006,
+      "global_shift_x_px": -17.2,
+      "registration_error": 1.0,
+      "phase_difference": 0.0010475272911877793,
+      "fixed_valid_ratio": 1.0,
+      "moving_valid_ratio": 0.90625,
+      "texture_score": 6848.813220936003,
+      "inlier": true
+    },
+    {
+      "roi_index": 7,
+      "fixed_origin_yx": [
+        83,
+        102
+      ],
+      "moving_origin_yx": [
+        83,
+        102
+      ],
+      "size_yx": [
+        192,
+        192
+      ],
+      "local_shift_y_px": 13.5,
+      "local_shift_x_px": -17.1,
+      "global_shift_y_px": 13.5,
+      "global_shift_x_px": -17.099999999999994,
+      "registration_error": 1.0,
+      "phase_difference": 0.0028837171133715965,
+      "fixed_valid_ratio": 1.0,
+      "moving_valid_ratio": 1.0,
+      "texture_score": 6784.0315937157975,
+      "inlier": true
+    },
+    {
+      "roi_index": 8,
+      "fixed_origin_yx": [
+        250,
+        410
+      ],
+      "moving_origin_yx": [
+        250,
+        410
+      ],
+      "size_yx": [
+        192,
+        192
+      ],
+      "local_shift_y_px": 13.5,
+      "local_shift_x_px": -17.1,
+      "global_shift_y_px": 13.5,
+      "global_shift_x_px": -17.100000000000023,
+      "registration_error": 1.0,
+      "phase_difference": -0.0009555292661365589,
+      "fixed_valid_ratio": 1.0,
+      "moving_valid_ratio": 1.0,
+      "texture_score": 6763.119733352942,
+      "inlier": true
+    }
+  ],
+  "reference": {
+    "image": "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/zz_synthetic_mosaic_registration_260810_Th1CDg/fixed_unequal.tif",
+    "height_px": 640,
+    "width_px": 704,
+    "dtype": "uint16",
+    "size_bytes": 983728,
+    "mtime_ns": 1786315391610354436
+  },
+  "moving": {
+    "image": "/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/02_FovIntegration/zz_synthetic_mosaic_registration_260810_Th1CDg/moving_unequal.tif",
+    "height_px": 608,
+    "width_px": 736,
+    "dtype": "uint16",
+    "size_bytes": 983728,
+    "mtime_ns": 1786315391613496422
+  },
+  "created_at_utc": "2026-08-09T22:43:38.189894+00:00",
+  "method": {
+    "backend": "python",
+    "algorithm": "coarse_to_fine_phase_correlation",
+    "backend_version": "3.12.13",
+    "library_versions": {
+      "numpy": "2.5.1",
+      "scipy": "1.18.0",
+      "scikit_image": "0.26.0",
+      "tifffile": "2025.5.10"
+    },
+    "parameters": {
+      "overview_downsample": 8,
+      "overview_block_px": 256,
+      "roi_size_px": 192,
+      "roi_count": 9,
+      "min_valid_rois": 4,
+      "upsample_factor": 20,
+      "min_overlap_ratio": 0.2,
+      "max_roi_spread_px": 1.0
+    }
+  }
+}
