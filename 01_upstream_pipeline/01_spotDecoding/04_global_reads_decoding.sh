@@ -1,18 +1,18 @@
 #!/bin/bash
-#SBATCH -o logs_global_readDecoding/global_readDecoding_%A_%a.out
-#SBATCH -e logs_global_readDecoding/global_readDecoding_%A_%a.err
+#SBATCH -o logs004_global_readDecoding/global_readDecoding_%A_%a.out
+#SBATCH -e logs004_global_readDecoding/global_readDecoding_%A_%a.err
 #SBATCH -J gRD
 #SBATCH -p C64M512G
 #SBATCH -n 1
 #SBATCH -c 8
-#SBATCH --mem=64G
+
 #SBATCH --time=24:00:00
 #SBATCH --array=1-25%25
 
 module purge
 module load matlab/2023a
 
-mkdir -p logs_global_readDecoding
+
 start_time=$(date +%s)
 echo "Start time: $(date '+%Y-%m-%d %H:%M:%S')"
 

@@ -1,17 +1,17 @@
 #!/bin/bash
-#SBATCH -o logs_local_image_stitch/local_image_stitch_%A_%a.out  
-#SBATCH -e logs_local_image_stitch/local_image_stitch_%A_%a.err
+#SBATCH -o logs003_local_image_stitch/local_image_stitch_%A_%a.out  
+#SBATCH -e logs003_local_image_stitch/local_image_stitch_%A_%a.err
 #SBATCH -J LS
 #SBATCH -p C64M512G 
 #SBATCH -c 8
-# #SBATCH --mem=64G
+
 #SBATCH --time=24:00:00
 #SBATCH --array=1-25%25
 
 module purge
 module load matlab/2023a
 
-mkdir -p logs_local_image_stitch
+
 start_time=$(date +%s)
 echo "Start time: $(date '+%Y-%m-%d %H:%M:%S')"
 

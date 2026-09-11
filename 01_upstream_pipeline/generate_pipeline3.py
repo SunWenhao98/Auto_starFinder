@@ -31,6 +31,79 @@ def format_named_args(pairs):
     )
 
 
+def positive_config_int(section, key):
+    value = section.getint(key)
+    if value <= 0:
+        raise ValueError(f"{key} must be a positive integer")
+    return value
+
+
+def render_submission_controller(user_task_limit, system_task_limit):
+    return f'''# --- GR/LR/LS/gRD submission quota controller ---
+SUBMIT_USER_TASK_LIMIT={user_task_limit}
+SUBMIT_SYSTEM_TASK_LIMIT={system_task_limit}
+
+read_queue_counts() {{
+    local queue_output task_id task_user
+    if ! queue_output=$(squeue -h --array --states=PENDING,RUNNING -o "%i|%u"); then
+        printf 'Failed to query SLURM queue; submission stopped.\n' >&2
+        return 1
+    fi
+
+    declare -A seen_task_ids=()
+    QUEUE_USER_TASKS=0
+    QUEUE_SYSTEM_TASKS=0
+    while IFS='|' read -r task_id task_user; do
+        [[ -z "$task_id" || -n "${{seen_task_ids[$task_id]+x}}" ]] && continue
+        seen_task_ids[$task_id]=1
+        ((QUEUE_SYSTEM_TASKS+=1))
+        if [[ "$task_user" == "$USER" ]]; then
+            ((QUEUE_USER_TASKS+=1))
+        fi
+    done <<< "$queue_output"
+}}
+
+submit_array_when_ready() {{
+    local required_tasks=$1
+    local job_label=$2
+    local initial_wait_seconds=$3
+    local poll_seconds=$4
+    local wait_seconds=$initial_wait_seconds
+    local user_remaining system_remaining sbatch_output sbatch_status
+    shift 4
+
+    while true; do
+        read_queue_counts || return 1
+        user_remaining=$((SUBMIT_USER_TASK_LIMIT - QUEUE_USER_TASKS))
+        system_remaining=$((SUBMIT_SYSTEM_TASK_LIMIT - QUEUE_SYSTEM_TASKS))
+
+        if (( required_tasks <= user_remaining && required_tasks <= system_remaining )); then
+            if sbatch_output=$("$@"); then
+                printf '%s\n' "$sbatch_output"
+                return 0
+            else
+                sbatch_status=$?
+            fi
+
+            read_queue_counts || return "$sbatch_status"
+            user_remaining=$((SUBMIT_USER_TASK_LIMIT - QUEUE_USER_TASKS))
+            system_remaining=$((SUBMIT_SYSTEM_TASK_LIMIT - QUEUE_SYSTEM_TASKS))
+            if (( required_tasks <= user_remaining && required_tasks <= system_remaining )); then
+                printf 'Submission failed for %s while quota remained available.\n' "$job_label" >&2
+                return "$sbatch_status"
+            fi
+            wait_seconds=$poll_seconds
+        fi
+
+        printf 'Waiting to submit %s: required=%s user_remaining=%s system_remaining=%s sleep=%ss\n' \
+            "$job_label" "$required_tasks" "$user_remaining" "$system_remaining" "$wait_seconds" >&2
+        sleep "$wait_seconds"
+        wait_seconds=$poll_seconds
+    done
+}}
+'''
+
+
 def generate_shell_script(config_file):
     
     config = configparser.ConfigParser(
@@ -44,9 +117,29 @@ def generate_shell_script(config_file):
         print(f"Error reading config file {config_file}: {e}", file=sys.stderr)
         sys.exit(1)
 
+    try:
+        default_config = config['DEFAULT']
+        submit_user_task_limit = positive_config_int(
+            default_config, 'submit_user_task_limit'
+        )
+        submit_system_task_limit = positive_config_int(
+            default_config, 'submit_system_task_limit'
+        )
+        if submit_user_task_limit > submit_system_task_limit:
+            raise ValueError(
+                'submit_user_task_limit must not exceed submit_system_task_limit'
+            )
+    except (KeyError, ValueError) as error:
+        print(f"Invalid submission quota configuration: {error}", file=sys.stderr)
+        sys.exit(1)
+
     print("#!/bin/bash")
     print(f"# Auto-generated script from {config_file}")
     print("# This script submits a batch of STARmap pipeline jobs.\n")
+    print(render_submission_controller(
+        submit_user_task_limit,
+        submit_system_task_limit,
+    ))
 
     # 筛选出所有 Job 节，并排序
     job_sections = sorted([s for s in config.sections() if s != 'DEFAULT'])
@@ -66,6 +159,40 @@ def generate_shell_script(config_file):
         
         # p 会自动从 [DEFAULT] 继承，并被 [JOB_XXX] 覆盖
         p = config[section_name]
+
+        try:
+            stage_settings = {}
+            for stage in ('gr', 'lr', 'ls', 'gd'):
+                parallel_tasks = positive_config_int(p, f'{stage}_parallel_tasks')
+                stage_settings[stage] = {
+                    'array_tasks': positive_config_int(p, f'{stage}_array_tasks'),
+                    'parallel_tasks': parallel_tasks,
+                    'initial_wait_seconds': positive_config_int(
+                        p, f'{stage}_submit_initial_wait_seconds'
+                    ),
+                    'poll_seconds': positive_config_int(
+                        p, f'{stage}_submit_poll_seconds'
+                    ),
+                }
+            lr_chunk_tasks = positive_config_int(p, 'lr_chunk_tasks')
+            for stage in ('gr', 'ls', 'gd'):
+                required_tasks = stage_settings[stage]['array_tasks']
+                if required_tasks > min(
+                    submit_user_task_limit, submit_system_task_limit
+                ):
+                    raise ValueError(
+                        f'{stage}_array_tasks exceeds submission task limits'
+                    )
+            if lr_chunk_tasks > min(
+                submit_user_task_limit, submit_system_task_limit
+            ):
+                raise ValueError('lr_chunk_tasks exceeds submission task limits')
+        except (KeyError, ValueError) as error:
+            print(
+                f"Invalid quota configuration in [{section_name}]: {error}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         
         job_prefix = f"ARRAY{job_counter:03d}"
         JOB_ID_VAR = f"{job_prefix}_JOB_ID"
@@ -678,10 +805,10 @@ def generate_shell_script(config_file):
 
         # --- 上游分析流程 GLobal Registration (run_global_reg) ---
         if p.getboolean('run_global_reg'):
-            cmd_s1 = f"sbatch --array={gr_array} -p {p['gr_partition']} -c {p['gr_cpus']} {dependency_str} {p['script_global_reg']} \\\n{gr_args}"
+            cmd_s1 = f"submit_array_when_ready {stage_settings['gr']['array_tasks']} GR {stage_settings['gr']['initial_wait_seconds']} {stage_settings['gr']['poll_seconds']} sbatch --array={gr_array} -p {p['gr_partition']} -c {p['gr_cpus']} {dependency_str} {p['script_global_reg']} \\\n{gr_args}"
             print(f"# Submit step: Global Registration")
             print(f"{JOB_OUT_VAR}=$(\\")
-            print(f"{cmd_s1})")
+            print(f"{cmd_s1}) || exit $?")
             print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
             print(f"echo \"Submitted Step(GR): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}" 
@@ -692,24 +819,24 @@ def generate_shell_script(config_file):
         # ======================================================
         if p.getboolean('run_local_reg'):
             total_tasks = int(p['lr_array_tasks'])
-            max_chunk_size = 1000
+            max_chunk_size = lr_chunk_tasks
             
             if total_tasks <= max_chunk_size:
-                # --- 逻辑 1: 任务数 <= 1000，使用 ini 中的静态 offset ---
+                # 单个 chunk 使用 ini 中的静态 offset
                 
                 # 将静态 offset 拼接到 lr_args_base
                 lr_args_simple = f"{lr_args_base} {p['lr_offset']}"
                 
-                cmd_s2 = f"sbatch --array={lr_array} -p {p['lr_partition']} -c {p['lr_cpus']} {dependency_str} {p['script_local_reg']} \\\n{lr_args_simple}"
+                cmd_s2 = f"submit_array_when_ready {total_tasks} LR {stage_settings['lr']['initial_wait_seconds']} {stage_settings['lr']['poll_seconds']} sbatch --array={lr_array} -p {p['lr_partition']} -c {p['lr_cpus']} {dependency_str} {p['script_local_reg']} \\\n{lr_args_simple}"
                 print(f"# Submit step: Local Registration (Single Job)")
                 print(f"{JOB_OUT_VAR}=$(\\")
-                print(f"{cmd_s2})")
+                print(f"{cmd_s2}) || exit $?")
                 print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
                 print(f"echo \"Submitted Step(LR): ${{{JOB_ID_VAR}}}\"\n")
                 dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
             
             else:
-                # --- 逻辑 2: 任务数 > 1000，分片提交并使用动态 offset ---
+                # 多个 chunk 分片提交并使用动态 offset
                 parallel_limit = p['lr_parallel_tasks']
                 
                 # 构建不含 --array 和 offset 的基础 sbatch 命令
@@ -733,11 +860,17 @@ def generate_shell_script(config_file):
                     array_range = f"{start - dynamic_offset + int(p['lr_offset'])}-{end - dynamic_offset + int(p['lr_offset'])}"
                     array_string = build_array_option(array_range, parallel_limit)
                     # 构建此分片的完整 sbatch 命令
-                    cmd_s2_chunk = f"""{cmd_s2_sbatch_base.replace('sbatch', f'sbatch {array_string} -p {p["lr_partition"]} -c {p["lr_cpus"]}', 1)}{lr_args_chunk}"""
+                    chunk_tasks = end - start + 1
+                    quota_prefix = (
+                        f"submit_array_when_ready {chunk_tasks} LR "
+                        f"{stage_settings['lr']['initial_wait_seconds']} "
+                        f"{stage_settings['lr']['poll_seconds']} "
+                    )
+                    cmd_s2_chunk = f"""{quota_prefix}{cmd_s2_sbatch_base.replace('sbatch', f'sbatch {array_string} -p {p["lr_partition"]} -c {p["lr_cpus"]}', 1)}{lr_args_chunk}"""
 
                     print(f"# Submitting LR Chunk {start}-{end} with offset {dynamic_offset}")
                     print(f"{JOB_OUT_VAR}=$(\\")
-                    print(f"{cmd_s2_chunk})")
+                    print(f"{cmd_s2_chunk}) || exit $?")
                     print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
                     print(f"echo \"Submitted Step(LR) Chunk {start}-{end}: ${{{JOB_ID_VAR}}}\"")
                     print(f"LR_JOB_IDS+=(${{{JOB_ID_VAR}}})")
@@ -754,10 +887,10 @@ def generate_shell_script(config_file):
 
 
         if p.getboolean('run_stitch'):
-            cmd_s3 = f"sbatch --array={ls_array} -p {p['ls_partition']} -c {p['ls_cpus']} {dependency_str} {p['script_stitch']} \\\n{ls_args}"
+            cmd_s3 = f"submit_array_when_ready {stage_settings['ls']['array_tasks']} LS {stage_settings['ls']['initial_wait_seconds']} {stage_settings['ls']['poll_seconds']} sbatch --array={ls_array} -p {p['ls_partition']} -c {p['ls_cpus']} {dependency_str} {p['script_stitch']} \\\n{ls_args}"
             print(f"# Submit step: Local Stitch")
             print(f"{JOB_OUT_VAR}=$(\\")
-            print(f"{cmd_s3})")
+            print(f"{cmd_s3}) || exit $?")
             print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
             print(f"echo \"Submitted Step(LS): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"
@@ -879,10 +1012,10 @@ def generate_shell_script(config_file):
             print(f"cd {work_dir} || {{ echo 'Failed to cd into {work_dir}'; exit 1; }}\n")
         
         if p.getboolean('run_decoding'):
-            cmd_s4 = f"sbatch --array={gd_array} -p {p['gd_partition']} -c {p['gd_cpus']} {dependency_str} {p['script_decoding']} \\\n{gd_args}"
+            cmd_s4 = f"submit_array_when_ready {stage_settings['gd']['array_tasks']} gRD {stage_settings['gd']['initial_wait_seconds']} {stage_settings['gd']['poll_seconds']} sbatch --array={gd_array} -p {p['gd_partition']} -c {p['gd_cpus']} {dependency_str} {p['script_decoding']} \\\n{gd_args}"
             print(f"# Submit step: Global Decoding")
             print(f"{JOB_OUT_VAR}=$(\\")
-            print(f"{cmd_s4})")
+            print(f"{cmd_s4}) || exit $?")
             print(f"{JOB_ID_VAR}=$(echo ${JOB_OUT_VAR} | awk '{{print $4}}')")
             print(f"echo \"Submitted Step(GD): ${{{JOB_ID_VAR}}}\"\n")
             dependency_str = f"--dependency=afterok:${{{JOB_ID_VAR}}}"

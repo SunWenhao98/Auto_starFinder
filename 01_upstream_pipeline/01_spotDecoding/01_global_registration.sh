@@ -1,19 +1,19 @@
 #!/bin/bash
 
 #SBATCH -J GR
-#SBATCH -o logs_global_registration/global_registration_%A_%a.out
-#SBATCH -e logs_global_registration/global_registration_%A_%a.err
+#SBATCH -o logs001_global_registration/global_registration_%A_%a.out
+#SBATCH -e logs001_global_registration/global_registration_%A_%a.err
 
 #SBATCH -p C64M512G
 #SBATCH -c 16
-##SBATCH --mem=128G
+
 #SBATCH --time=24:00:00
 #SBATCH --array=1-198%25
 
 module purge
 module load matlab/2023a
 
-mkdir -p logs_global_registration
+
 start_time=$(date +%s)
 echo "Start time: $(date '+%Y-%m-%d %H:%M:%S')"
 

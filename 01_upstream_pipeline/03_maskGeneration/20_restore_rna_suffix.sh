@@ -135,7 +135,7 @@ echo "------------------- start processing ..."
 
 
 
-python -u /gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/03_maskGeneration/restore_rna_suffix.py \
+python -u /gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/03_maskGeneration/p21_restore_rna_suffix.py \
     --raw_csv "${raw_csv}" \
     --processed_csv "${remained_csv}" \
     --output_csv "${output_csv}" \
