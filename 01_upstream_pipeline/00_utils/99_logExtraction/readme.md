@@ -9,10 +9,10 @@
 
 | log_type | 日志目录 | parser 输出目录 | summary 输出目录 |
 | --- | --- | --- | --- |
-| `decoding` | `logs_global_readDecoding` | `zz_decoding` | `zz_decoding/zz_sum_decoding` |
-| `global_spf` | `logs_global_spot_finding` | `zz_globalspf` | `zz_globalspf/zz_sum_globalspf` |
+| `decoding` | `logs004_global_readDecoding` | `zz_decoding` | `zz_decoding/zz_sum_decoding` |
+| `global_spf` | `logs004_global_spot_finding` | `zz_globalspf` | `zz_globalspf/zz_sum_globalspf` |
 | `dapi_cp` | `logs_dapi_segmentation` | `zz_dapicp` | `zz_dapicp/zz_sum_dapicp` |
-| `gr_shift` | `logs_global_registration` | `zz_grshift` | `zz_grshift/zz_sum_grshift` |
+| `gr_shift` | `logs001_global_registration` | `zz_grshift` | `zz_grshift/zz_sum_grshift` |
 
 ### 基本用法
 

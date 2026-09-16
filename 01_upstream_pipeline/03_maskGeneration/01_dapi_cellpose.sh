@@ -1,103 +1,125 @@
 #!/bin/bash
-
 #SBATCH -J dapi_segmentation
-#SBATCH -o logs_dapi_segmentation/dapi_segmentation_%A_%a.out
-#SBATCH -e logs_dapi_segmentation/dapi_segmentation_%A_%a.err
-
+#SBATCH -o logs008_dapi_segmentation/%x_%A_%a.out
+#SBATCH -e logs008_dapi_segmentation/%x_%A_%a.err
 #SBATCH -p GPUA800
-#SBATCH -n 1
+#SBATCH -N 1
+#SBATCH -c 1
 #SBATCH --gres=gpu:1
-#SBATCH --mem=128G
-
 #SBATCH --time=24:00:00
 #SBATCH --array=1-8%8
 
-# 加载环境
-echo "Loading Environment..."
+set -euo pipefail
 
-source /gpfs/share/home/${USER}/anaconda3/etc/profile.d/conda.sh
+print_usage() {
+    echo "Usage: $0 --project_root PATH --project_name NAME --reg_dir_suffix SUFFIX [options]"
+}
+
+print_slurm_info() {
+    echo "Job ID:          $SLURM_JOB_ID"
+    echo "Job Name:        $SLURM_JOB_NAME"
+    echo "User:            $SLURM_JOB_USER"
+    echo "Submit Host:     $SLURM_SUBMIT_HOST"
+    echo "Submit Directory:$SLURM_SUBMIT_DIR"
+    echo "Node List:       $SLURM_NODELIST"
+    echo "Job Node:        $SLURMD_NODENAME"
+    echo "Number of Nodes: $SLURM_JOB_NUM_NODES"
+    echo "Partition:       $SLURM_JOB_PARTITION"
+    echo "CPUs per task:   $SLURM_CPUS_PER_TASK"
+    echo "Allocated CPUs:  $SLURM_JOB_CPUS_PER_NODE"
+}
+
+PROJECT_ROOT=""
+PROJECT_NAME=""
+REG_DIR_SUFFIX=""
+SCRIPT_DIR=""
+CONDA_SH=""
+REF_ROUND="1"
+DIAMETER="100"
+AREA_THRESHOLD="1600"
+OFFSET="0"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --project_root) PROJECT_ROOT="$2"; shift 2 ;;
+        --project_name) PROJECT_NAME="$2"; shift 2 ;;
+        --reg_dir_suffix) REG_DIR_SUFFIX="$2"; shift 2 ;;
+        --script_dir) SCRIPT_DIR="$2"; shift 2 ;;
+        --conda_sh) CONDA_SH="$2"; shift 2 ;;
+        --ref_round) REF_ROUND="$2"; shift 2 ;;
+        --diameter) DIAMETER="$2"; shift 2 ;;
+        --area_threshold) AREA_THRESHOLD="$2"; shift 2 ;;
+        --offset) OFFSET="$2"; shift 2 ;;
+        -h|--help) print_usage; exit 0 ;;
+        *) print_usage >&2; exit 2 ;;
+    esac
+done
+
+START_TIME=$(date +%s)
+START_TIME_TEXT=$(date '+%Y-%m-%d %H:%M:%S')
+FINAL_STATUS=""
+
+finish() {
+    local exit_code=$?
+    local end_time
+    local end_time_text
+    local status
+    end_time=$(date +%s)
+    end_time_text=$(date '+%Y-%m-%d %H:%M:%S')
+    if (( exit_code == 0 )); then
+        status="${FINAL_STATUS:-SUCCESS}"
+    else
+        status="FAILED"
+    fi
+    echo "开始时间: ${START_TIME_TEXT}"
+    echo "结束时间: ${end_time_text}"
+    echo "运行时间: $((end_time - START_TIME)) seconds"
+    echo "STATUS: ${status} | SLURM_JOB_NAME=${SLURM_JOB_NAME:-N/A}"
+}
+trap finish EXIT
+
+TASK_ID=$((SLURM_ARRAY_TASK_ID + OFFSET))
+POSITION_INDEX=$((TASK_ID - 1))
+printf -v ROUND_DIR "round%03d" "$((10#${REF_ROUND}))"
+REFERENCE_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/01_data/${ROUND_DIR}"
+readarray -t DAPI_FILES < <(find -L "${REFERENCE_DIR}" -maxdepth 2 -type f -name "*ch03.tif" | sort -V)
+if (( POSITION_INDEX < 0 || POSITION_INDEX >= ${#DAPI_FILES[@]} )); then
+    echo "Task ID ${TASK_ID} is outside the available DAPI file range." >&2
+    exit 1
+fi
+
+DAPI_FILE="${DAPI_FILES[POSITION_INDEX]}"
+POSITION_NAME=$(basename "$(dirname "${DAPI_FILE}")")
+REGISTRATION_FOLDER="02_registration${REG_DIR_SUFFIX}"
+OUTPUT_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/${REGISTRATION_FOLDER}/${POSITION_NAME}/seg/dapi_cellpose"
+RUNNER="${SCRIPT_DIR}/run_cellpose.py"
+if [[ ! -f "${RUNNER}" || ! -f "${CONDA_SH}" ]]; then
+    echo "Runner or conda initialization path validation failed." >&2
+    exit 1
+fi
+mkdir -p "${OUTPUT_DIR}"
+
+print_slurm_info
+echo "PROJECT_ROOT=${PROJECT_ROOT}"
+echo "PROJECT_NAME=${PROJECT_NAME}"
+echo "REGISTRATION_FOLDER=${REGISTRATION_FOLDER}"
+echo "TASK_ID=${TASK_ID}"
+echo "POSITION_NAME=${POSITION_NAME}"
+echo "DAPI_FILE=${DAPI_FILE}"
+echo "OUTPUT_DIR=${OUTPUT_DIR}"
+echo "RUNNER=${RUNNER}"
+echo "CONDA_SH=${CONDA_SH}"
+echo "DIAMETER=${DIAMETER}"
+echo "AREA_THRESHOLD=${AREA_THRESHOLD}"
+echo "OFFSET=${OFFSET}"
+
+source "${CONDA_SH}"
+set +u
 conda activate cellpose
+set -u
 
-mkdir -p logs_dapi_segmentation
-start_time=$(date +%s)
-echo "Start time: $(date '+%Y-%m-%d %H:%M:%S')"
-
-echo "============= SLURM Job Info =================="
-echo "Job ID:          $SLURM_JOB_ID"
-echo "Job Name:        $SLURM_JOB_NAME"
-echo "User:            $SLURM_JOB_USER"
-echo "Submit Host:     $SLURM_SUBMIT_HOST"
-echo "Submit Directory:$SLURM_SUBMIT_DIR"
-echo "Node List:       $SLURM_NODELIST"
-echo "Job Node:        $SLURMD_NODENAME"
-echo "Number of Nodes: $SLURM_JOB_NUM_NODES"
-echo "Partition:       $SLURM_JOB_PARTITION"
-
-echo "============= CPU/Memory Allocation ============="
-echo "CPUs per task:   $SLURM_CPUS_PER_TASK"
-echo "Allocated CPUs:  $SLURM_JOB_CPUS_PER_NODE"
-
-echo "Tasks per node:  $SLURM_NTASKS_PER_NODE"
-echo "Total Tasks:     $SLURM_NTASKS"
-echo "Memory per node: $SLURM_MEM_PER_NODE MB"
-
-echo "============= GPU Allocation Info ==============="
-echo "Allocated GPUs:  $SLURM_GPUS"
-echo "GPU Devices:     $CUDA_VISIBLE_DEVICES"
-echo "GPU Type:       $(nvidia-smi -L | cut -d'(' -f1)"
-
-echo "============= GPU Runtime Status =============="
-nvidia-smi --query-gpu=index,name,utilization.gpu,memory.total,memory.used --format=csv,noheader
-echo "================================================="
-
-SCRIPT_ROOT="/gpfs/share/home/${USER}/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline"
-SCRIPT_PATH="${SCRIPT_ROOT}/03_maskGeneration/run_cellpose.py"
-# CORE_MATLAB_DIR="${SCRIPT_ROOT}/core_programs/01_starfinder_for_OT1"
-# export CORE_MATLAB_DIR
-
-# ================= Input Parameters =================
-PROJECT_ROOT=$1
-PROJECT_NAME=$2
-registration_folder=$3
-ref_round=${4:-1}
-DIAMETER=${5:-100}
-THRESHOLD=${6:-0}
-OFFSET=${7:-0}
-
-TASK_ID=$(( SLURM_ARRAY_TASK_ID + OFFSET ))
-index=$(( TASK_ID - 1 ))
-reference_dir="${PROJECT_ROOT}/${PROJECT_NAME}/01_data/round00${ref_round}"
-
-declare -a dapi_files
-readarray -t dapi_files < <(find "${reference_dir}" -maxdepth 2 -name "*ch03.tif" | sort -V)
-dapi_file=${dapi_files[$index]}
-POSITION_NAME=$(basename "$(dirname "${dapi_file}")")
-output_dir="${PROJECT_ROOT}/${PROJECT_NAME}/${registration_folder}/${POSITION_NAME}/seg/dapi_cellpose"
-mkdir -p "${output_dir}"
-
-echo "Processing file: ${dapi_file}"
-echo "[INFO] PROJECT_ROOT: $PROJECT_ROOT"
-echo "[INFO] PROJECT_NAME: $PROJECT_NAME"
-echo "Output Dir: ${output_dir}"
-
-
-# ================= EXECUTION =================
-# npy_file="${output_dir}/${POSITION_NAME}_dapi2d_cellpose.npy"
-
-echo ">>> Running 2D Cellpose Segmentation..."
-
-python -u "${SCRIPT_PATH}" \
-    --input "${dapi_file}" \
-    --output_base "${output_dir}/${POSITION_NAME}_dapi2d_cellpose" \
-    --diameter ${DIAMETER} \
-    --threshold ${THRESHOLD}
-
-# if [ ! -f "$npy_file" ]; then
-#     echo "Error: Cellpose finished, but output file not found: ${npy_file}"
-#     exit 1
-# fi
-# echo "Cellpose 2D Output Found: ${npy_file}"
-
-end_time=$(date +%s)
-echo "End time: $(date '+%Y-%m-%d %H:%M:%S')"
-echo "运行时间: $(($end_time - $start_time)) seconds"
+python -u "${RUNNER}" \
+    --input "${DAPI_FILE}" \
+    --output_base "${OUTPUT_DIR}/${POSITION_NAME}_dapi2d_cellpose" \
+    --diameter "${DIAMETER}" \
+    --threshold "${AREA_THRESHOLD}"

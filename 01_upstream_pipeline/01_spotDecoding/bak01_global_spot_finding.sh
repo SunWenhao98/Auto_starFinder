@@ -1,88 +1,126 @@
 #!/bin/bash
-#SBATCH -o logs_global_spot_finding/global_spotFinding_%A_%a.out
-#SBATCH -e logs_global_spot_finding/global_spotFinding_%A_%a.err
 #SBATCH -J gSPF
+#SBATCH -o logs004_global_spot_finding/%x_%A_%a.out
+#SBATCH -e logs004_global_spot_finding/%x_%A_%a.err
 #SBATCH -p C64M512G
 #SBATCH -c 4
-#SBATCH --mem=32G
 #SBATCH --time=24:00:00
 #SBATCH --array=1-25%25
+
+set -euo pipefail
+
+print_usage() {
+    echo "Usage: $0 --project_root PATH --project_name NAME --reg_dir_suffix SUFFIX [options]"
+}
+
+print_slurm_info() {
+    echo "Job ID:          $SLURM_JOB_ID"
+    echo "Job Name:        $SLURM_JOB_NAME"
+    echo "User:            $SLURM_JOB_USER"
+    echo "Submit Host:     $SLURM_SUBMIT_HOST"
+    echo "Submit Directory:$SLURM_SUBMIT_DIR"
+    echo "Node List:       $SLURM_NODELIST"
+    echo "Job Node:        $SLURMD_NODENAME"
+    echo "Number of Nodes: $SLURM_JOB_NUM_NODES"
+    echo "Partition:       $SLURM_JOB_PARTITION"
+    echo "CPUs per task:   $SLURM_CPUS_PER_TASK"
+    echo "Allocated CPUs:  $SLURM_JOB_CPUS_PER_NODE"
+}
+
+PROJECT_ROOT=""
+PROJECT_NAME=""
+REG_DIR_SUFFIX=""
+CORE_MATLAB_DIR=""
+INTENSITY_THRESHOLD="0.2"
+SPOTFINDING_METHOD="max3d"
+LOADING_MODE="local_registration"
+IMAGE_WIDTH="2304"
+IMAGE_DEPTH="38"
+REF_ROUND="1"
+CHANNEL_NUM="3"
+ROUND_NUM="6"
+OFFSET="0"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --project_root) PROJECT_ROOT="$2"; shift 2 ;;
+        --project_name) PROJECT_NAME="$2"; shift 2 ;;
+        --reg_dir_suffix) REG_DIR_SUFFIX="$2"; shift 2 ;;
+        --core_matlab_dir) CORE_MATLAB_DIR="$2"; shift 2 ;;
+        --intensity_threshold) INTENSITY_THRESHOLD="$2"; shift 2 ;;
+        --spotfinding_method) SPOTFINDING_METHOD="$2"; shift 2 ;;
+        --loading_mode) LOADING_MODE="$2"; shift 2 ;;
+        --image_width) IMAGE_WIDTH="$2"; shift 2 ;;
+        --image_depth) IMAGE_DEPTH="$2"; shift 2 ;;
+        --ref_round) REF_ROUND="$2"; shift 2 ;;
+        --channel_num) CHANNEL_NUM="$2"; shift 2 ;;
+        --round_num) ROUND_NUM="$2"; shift 2 ;;
+        --offset) OFFSET="$2"; shift 2 ;;
+        -h|--help) print_usage; exit 0 ;;
+        *) print_usage >&2; exit 2 ;;
+    esac
+done
+
+if [[ -z "${CORE_MATLAB_DIR}" || ! -d "${CORE_MATLAB_DIR}" ]]; then
+    echo "--core_matlab_dir must be an existing directory." >&2
+    exit 2
+fi
+
+START_TIME=$(date +%s)
+START_TIME_TEXT=$(date '+%Y-%m-%d %H:%M:%S')
+FINAL_STATUS=""
+
+finish() {
+    local exit_code=$?
+    local end_time
+    local end_time_text
+    local status
+    end_time=$(date +%s)
+    end_time_text=$(date '+%Y-%m-%d %H:%M:%S')
+    if (( exit_code == 0 )); then
+        status="${FINAL_STATUS:-SUCCESS}"
+    else
+        status="FAILED"
+    fi
+    echo "开始时间: ${START_TIME_TEXT}"
+    echo "结束时间: ${end_time_text}"
+    echo "运行时间: $((end_time - START_TIME)) seconds"
+    echo "STATUS: ${status} | SLURM_JOB_NAME=${SLURM_JOB_NAME:-N/A}"
+}
+trap finish EXIT
+
+# Resolve the logical task to a sorted Position directory.
+TASK_ID=$((SLURM_ARRAY_TASK_ID + OFFSET))
+POSITION_INDEX=$((TASK_ID - 1))
+DATA_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/01_data/round001"
+readarray -t POSITIONS < <(find -L "${DATA_DIR}" -maxdepth 1 -type d -name "Position*" | sort -V)
+if (( POSITION_INDEX < 0 || POSITION_INDEX >= ${#POSITIONS[@]} )); then
+    echo "Task ID ${TASK_ID} is outside the available Position range." >&2
+    exit 1
+fi
+POSITION_NAME=$(basename "${POSITIONS[POSITION_INDEX]}")
+REGISTRATION_FOLDER="02_registration${REG_DIR_SUFFIX}"
+REGISTRATION_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/${REGISTRATION_FOLDER}"
 
 module purge
 module load matlab/2023a
 
-mkdir -p logs_global_spot_finding
-start_time=$(date +%s)
-echo "Start time: $(date '+%Y-%m-%d %H:%M:%S')"
+print_slurm_info
+echo "PROJECT_ROOT=${PROJECT_ROOT}"
+echo "PROJECT_NAME=${PROJECT_NAME}"
+echo "REGISTRATION_FOLDER=${REGISTRATION_FOLDER}"
+echo "REGISTRATION_DIR=${REGISTRATION_DIR}"
+echo "TASK_ID=${TASK_ID}"
+echo "POSITION_NAME=${POSITION_NAME}"
+echo "INTENSITY_THRESHOLD=${INTENSITY_THRESHOLD}"
+echo "SPOTFINDING_METHOD=${SPOTFINDING_METHOD}"
+echo "LOADING_MODE=${LOADING_MODE}"
+echo "IMAGE_WIDTH=${IMAGE_WIDTH}"
+echo "IMAGE_DEPTH=${IMAGE_DEPTH}"
+echo "REF_ROUND=${REF_ROUND}"
+echo "CHANNEL_NUM=${CHANNEL_NUM}"
+echo "ROUND_NUM=${ROUND_NUM}"
+echo "OFFSET=${OFFSET}"
+echo "CORE_MATLAB_DIR=${CORE_MATLAB_DIR}"
 
-
-CORE_MATLAB_DIR="/gpfs/share/home/2401111558/00_scripts/02_auto_starFinder/03.starpipeline.inuse/new_StarFinder/01_upstream_pipeline/core_programs"
-export CORE_MATLAB_DIR
-
-# SCRIPT_DIR=${SLURM_SUBMIT_DIR:-$(pwd)}
-# PROJECT_NAME=$(basename "$(dirname "$SCRIPT_DIR")")
-# echo "脚本所在目录 (SCRIPT_DIR): ${SCRIPT_DIR}"
-# echo "自动获取的项目名称 (PROJECT_NAME): ${PROJECT_NAME}"
-
-
-# PROJECT_ROOT="/gpfs/share/home/2401111558/01_project/07_Olympus_TEST/01_Data/01_GBM_series/81_correlationAnalysis"
-PROJECT_ROOT=$1
-PROJECT_NAME=$2
-registration_folder=$3
-intensity_threshold=${4:-0.2}
-spotfinding_method=${5:-'max3d'}
-loading_mode=${6:-'local_registration'}
-
-image_width=${7:-2304}
-image_depth=${8:-38}
-ref_round=${9:-1}
-channel_num=${10:-3}
-round_num=${11:-6}
-
-OFFSET=${12:-0}
-FSIZE=${13:-10}
-FSIGMA=${14:-1.5}
-
-echo "[INFO] PROJECT_ROOT: $PROJECT_ROOT"
-echo "[INFO] PROJECT_NAME: $PROJECT_NAME"
-echo "[INFO] registration_folder: $registration_folder"
-
-
-# OFFSET=${OFFSET:-0}
-TASK_ID=$(( SLURM_ARRAY_TASK_ID + OFFSET ))
-# 这个逻辑适合访问 Position ID 连续的情形；
-# POSITION_NAME=$(printf "Position%03d" $TASK_ID)
-
-
-# Position ID 不从001开始，且不连续
-index=$((TASK_ID - 1))
-
-DATA_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/01_data/round001"
-declare -a positions
-readarray -t positions < <(find "${DATA_DIR}" -maxdepth 1 -type d -name "Position*" | sort -V)
-
-if [ ${#positions[@]} -eq 0 ]; then
-    echo "错误: 在目录 ${DATA_DIR} 中未找到任何 'Position*' 文件夹。" >&2
-    exit 1
-fi
-
-if [[ "$index" -lt 0 || "$index" -ge ${#positions[@]} ]]; then
-    echo "错误: SLURM_ARRAY_TASK_ID (${TASK_ID}) 超出有效范围 [1-${#positions[@]}]。" >&2
-    exit 1
-fi
-
-POSITION_NAME=$(basename "${positions[$index]}")
-
-echo "任务 (Task ID): ${TASK_ID}"
-echo "选中的 Position 文件夹名称: ${POSITION_NAME}"
-echo "------------------- start processing ..."
-
-
-matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'global_spot_finding', '$POSITION_NAME', \
- $image_width, $image_depth, $ref_round, $channel_num, $round_num, \
-  '$PROJECT_ROOT', '01_data', '$registration_folder', 'log', 'spotfinding_method', '$spotfinding_method', \
-  'intensity_threshold', $intensity_threshold, 'loading_mode', '$loading_mode')"
-
-end_time=$(date +%s)
-echo "End time: $(date '+%Y-%m-%d %H:%M:%S')"
-echo "运行时间: $(($end_time - $start_time)) seconds"
+matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'global_spot_finding', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'spotfinding_method', '$SPOTFINDING_METHOD', 'intensity_threshold', $INTENSITY_THRESHOLD, 'loading_mode', '$LOADING_MODE')"

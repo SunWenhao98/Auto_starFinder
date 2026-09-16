@@ -10,7 +10,6 @@ Output layout example:
 
 import argparse
 import csv
-import os
 import re
 import shutil
 from pathlib import Path
@@ -104,7 +103,7 @@ def convert_dtype(image, output_format):
     raise ValueError(f"Unsupported output_format: {output_format}")
 
 
-def write_output(src, dst, link_mode, output_format):
+def write_output(src, dst, output_format):
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists() or dst.is_symlink():
         dst.unlink()
@@ -117,13 +116,7 @@ def write_output(src, dst, link_mode, output_format):
         skimage.io.imsave(dst, image, check_contrast=False)
         return
 
-    if link_mode == "copy":
-        shutil.copy2(src, dst)
-    elif link_mode == "hardlink":
-        os.link(src, dst)
-    else:
-        rel_src = os.path.relpath(src, dst.parent)
-        os.symlink(rel_src, dst)
+    shutil.copy2(src, dst)
 
 
 def main():
@@ -135,13 +128,7 @@ def main():
         default="ch00=raw-561-CA9,ch01=raw-488-CD144,ch02=raw-647-CD31,ch03=raw-DAPI",
         help="Comma-separated raw-token:output-dir mapping.",
     )
-    parser.add_argument("--manifest_name", default="extra_layout_manifest.csv")
-    parser.add_argument(
-        "--link_mode",
-        choices=["symlink", "hardlink", "copy"],
-        default="copy",
-        help="Used only when output_format=preserve.",
-    )
+    parser.add_argument("--manifest_path", required=True, type=Path)
     parser.add_argument(
         "--output_format",
         choices=["preserve", "uint8", "uint16"],
@@ -158,7 +145,8 @@ def main():
         raise FileNotFoundError(f"No PositionXXX directories found in {args.raw_round_dir}")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = args.output_dir / args.manifest_name
+    manifest_path = args.manifest_path
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
     with manifest_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
@@ -169,7 +157,7 @@ def main():
             for token, dirname in channels:
                 src = find_channel_file(pos_dir, token)
                 dst = args.output_dir / dirname / f"{pos}.tif"
-                write_output(src, dst, args.link_mode, args.output_format)
+                write_output(src, dst, args.output_format)
                 writer.writerow([pos, token, dirname, str(src), str(dst)])
 
     print(f"Prepared extra channel layout: {args.output_dir}")

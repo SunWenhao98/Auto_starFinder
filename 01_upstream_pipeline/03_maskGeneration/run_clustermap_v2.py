@@ -11,10 +11,6 @@ from scipy import ndimage
 from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
 
-# from ClusterMap.ClusterMap.clustermap import *
-package_path = "/gpfs/share/home/2401111558/11_softwares/clustermap/ClusterMap"
-if package_path not in sys.path:
-    sys.path.append(package_path)
 from ClusterMap.clustermap import *
 # ==========================================
 # Helper Functions

@@ -11,10 +11,10 @@ parse_pipeline_logs.py
   python parse_pipeline_logs.py --batch-root /path/to/batch --log-type gr_shift
 
 固定映射：
-  decoding   -> logs_global_readDecoding  -> zz_decoding
-  global_spf -> logs_global_spot_finding  -> zz_globalspf
+  decoding   -> logs004_global_readDecoding  -> zz_decoding
+  global_spf -> logs004_global_spot_finding  -> zz_globalspf
   dapi_cp    -> logs_dapi_segmentation    -> zz_dapicp
-  gr_shift   -> logs_global_registration  -> zz_grshift
+  gr_shift   -> logs001_global_registration  -> zz_grshift
 
 输入约定：
   --batch-root 指向包含 submit* 子目录的批次目录。
@@ -58,9 +58,9 @@ DECODING_COLUMNS = [
 ]
 
 CONFIGS = {
-    "decoding": LogConfig("logs_global_readDecoding", "zz_decoding", DECODING_COLUMNS),
+    "decoding": LogConfig("logs004_global_readDecoding", "zz_decoding", DECODING_COLUMNS),
     "global_spf": LogConfig(
-        "logs_global_spot_finding",
+        "logs004_global_spot_finding",
         "zz_globalspf",
         ["submit_directory", "FOV_name", "SPF_Method", "Reference_Round", "Threshold", "Spots_Found"],
     ),
@@ -74,7 +74,7 @@ CONFIGS = {
         ],
     ),
     "gr_shift": LogConfig(
-        "logs_global_registration",
+        "logs001_global_registration",
         "zz_grshift",
         [
             "submit_directory", "FOV_name", "position_number", "round_name", "reference_round",

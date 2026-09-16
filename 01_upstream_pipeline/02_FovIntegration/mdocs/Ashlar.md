@@ -64,7 +64,7 @@ mosaic_height = ceil(max_y + image_xy - min_y)
 pixel_count   = mosaic_width * mosaic_height
 ```
 
-step 12 默认写 `fiji_fusion_preflight.json`。`fiji_fusion_safe=false` 是有效分析结果，step 12 仍成功，因此 Ashlar 路线不受阻塞；启用 gate 的 step 15 会在启动 Fiji 前停止并打印 `Use Ashlar stitching`。可用 `--run_fiji_fusion_preflight false` 显式跳过，但跳过不代表布局安全。
+step 12 默认写 `fiji_fusion_preflight.json`。`fiji_fusion_safe=false` 是有效分析结果，step 12 仍成功，因此 Ashlar 路线不受阻塞。该报告用于人工判断是否运行 Fiji；step 15 不再读取报告或实施 gate，启动前应确认 `fiji_fusion_safe=true`。
 
 该检查使用 initial coordinates，只负责提前识别明显超限布局，不保证 Fiji optimization 后的坐标不会进一步扩张。
 

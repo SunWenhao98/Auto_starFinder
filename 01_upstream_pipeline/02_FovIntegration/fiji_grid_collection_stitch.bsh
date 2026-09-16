@@ -24,43 +24,55 @@ print("==============================================================");
 print("Starting fiji_grid_collection_stitch.bsh...");
 
 String INPUT_DIR = requireEnvironment("INPUT_DIR");
-String GRID_X = requireEnvironment("GRID_X");
-String GRID_Y = requireEnvironment("GRID_Y");
-String FIRST_INDEX = requireEnvironment("FIRST_INDEX");
 String OUTPUT_NAME = requireEnvironment("OUTPUT_NAME");
 String STITCH_PATTERN = requireEnvironment("STITCH_PATTERN");
-String LAYOUT_FILE = requireEnvironment("LAYOUT_FILE");
-String OUTPUT_TEXTFILE_NAME = requireEnvironment("OUTPUT_TEXTFILE_NAME");
-String REGRESSION_THRESHOLD = requireEnvironment("REGRESSION_THRESHOLD");
-String MAX_AVG_DISPLACEMENT_THRESHOLD = requireEnvironment("MAX_AVG_DISPLACEMENT_THRESHOLD");
-String ABSOLUTE_DISPLACEMENT_THRESHOLD = requireEnvironment("ABSOLUTE_DISPLACEMENT_THRESHOLD");
-String FUSION_METHOD = requireEnvironment("FUSION_METHOD");
-String COMPUTE_OVERLAP = requireEnvironment("COMPUTE_OVERLAP");
-String SUBPIXEL_ACCURACY = requireEnvironment("SUBPIXEL_ACCURACY");
-String COMPUTATION_PARAMETERS = requireEnvironment("COMPUTATION_PARAMETERS");
-String IMAGE_OUTPUT = requireEnvironment("IMAGE_OUTPUT");
 String OUTPUT_DIRECTORY = requireEnvironment("OUTPUT_DIRECTORY");
 String SAVE_FORMAT = requireEnvironment("SAVE_FORMAT");
 String SCRIPT_DIR = requireEnvironment("SCRIPT_DIR");
 
 String args = pair("input_dir", INPUT_DIR) + ";" +
-    pair("grid_x", GRID_X) + ";" +
-    pair("grid_y", GRID_Y) + ";" +
-    pair("first_index", FIRST_INDEX) + ";" +
     pair("output_name", OUTPUT_NAME) + ";" +
     pair("stitch_pattern", STITCH_PATTERN) + ";" +
-    pair("layout_file", LAYOUT_FILE) + ";" +
-    pair("output_textfile_name", OUTPUT_TEXTFILE_NAME) + ";" +
-    pair("regression_threshold", REGRESSION_THRESHOLD) + ";" +
-    pair("max_avg_displacement_threshold", MAX_AVG_DISPLACEMENT_THRESHOLD) + ";" +
-    pair("absolute_displacement_threshold", ABSOLUTE_DISPLACEMENT_THRESHOLD) + ";" +
-    pair("fusion_method", FUSION_METHOD) + ";" +
-    pair("compute_overlap", COMPUTE_OVERLAP) + ";" +
-    pair("subpixel_accuracy", SUBPIXEL_ACCURACY) + ";" +
-    pair("computation_parameters", COMPUTATION_PARAMETERS) + ";" +
-    pair("image_output", IMAGE_OUTPUT) + ";" +
     pair("output_directory", OUTPUT_DIRECTORY) + ";" +
     pair("save_format", SAVE_FORMAT);
+
+if (STITCH_PATTERN.equals("Snake_row_Right_down")) {
+    args = args + ";" + pair("grid_x", requireEnvironment("GRID_X")) + ";" +
+        pair("grid_y", requireEnvironment("GRID_Y")) + ";" +
+        pair("first_index", requireEnvironment("FIRST_INDEX")) + ";" +
+        pair("output_textfile_name", requireEnvironment("OUTPUT_TEXTFILE_NAME")) + ";" +
+        pair("regression_threshold", requireEnvironment("REGRESSION_THRESHOLD")) + ";" +
+        pair("max_avg_displacement_threshold", requireEnvironment("MAX_AVG_DISPLACEMENT_THRESHOLD")) + ";" +
+        pair("absolute_displacement_threshold", requireEnvironment("ABSOLUTE_DISPLACEMENT_THRESHOLD")) + ";" +
+        pair("fusion_method", requireEnvironment("FUSION_METHOD")) + ";" +
+        pair("compute_overlap", requireEnvironment("COMPUTE_OVERLAP")) + ";" +
+        pair("subpixel_accuracy", requireEnvironment("SUBPIXEL_ACCURACY")) + ";" +
+        pair("computation_parameters", requireEnvironment("COMPUTATION_PARAMETERS")) + ";" +
+        pair("image_output", requireEnvironment("IMAGE_OUTPUT"));
+} else if (STITCH_PATTERN.equals("Positions_from_file")) {
+    args = args + ";" + pair("layout_file", requireEnvironment("LAYOUT_FILE")) + ";" +
+        pair("regression_threshold", requireEnvironment("REGRESSION_THRESHOLD")) + ";" +
+        pair("max_avg_displacement_threshold", requireEnvironment("MAX_AVG_DISPLACEMENT_THRESHOLD")) + ";" +
+        pair("absolute_displacement_threshold", requireEnvironment("ABSOLUTE_DISPLACEMENT_THRESHOLD")) + ";" +
+        pair("fusion_method", requireEnvironment("FUSION_METHOD")) + ";" +
+        pair("compute_overlap", requireEnvironment("COMPUTE_OVERLAP")) + ";" +
+        pair("subpixel_accuracy", requireEnvironment("SUBPIXEL_ACCURACY")) + ";" +
+        pair("computation_parameters", requireEnvironment("COMPUTATION_PARAMETERS")) + ";" +
+        pair("image_output", requireEnvironment("IMAGE_OUTPUT"));
+} else if (STITCH_PATTERN.equals("Positions_from_file_mosaic")) {
+    args = args + ";" + pair("layout_file", requireEnvironment("LAYOUT_FILE")) + ";" +
+        pair("fusion_method", requireEnvironment("FUSION_METHOD")) + ";" +
+        pair("subpixel_accuracy", requireEnvironment("SUBPIXEL_ACCURACY")) + ";" +
+        pair("image_output", requireEnvironment("IMAGE_OUTPUT"));
+} else if (
+    STITCH_PATTERN.equals("Positions_from_file_p1") ||
+    STITCH_PATTERN.equals("Positions_from_file_p2") ||
+    STITCH_PATTERN.equals("Positions_from_file_downsampled")
+) {
+    // These legacy macro branches define their Fiji parameters internally.
+} else {
+    throw new RuntimeException("Unknown STITCH_PATTERN: " + STITCH_PATTERN);
+}
 
 mpicbg.stitching.GlobalOptimization.ignoreZ = true;
 print("Set mpicbg.stitching.GlobalOptimization.ignoreZ = true");

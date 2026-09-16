@@ -1,12 +1,11 @@
 #!/bin/bash
-#SBATCH -J gRD
-#SBATCH -o logs004_global_reads_decoding/%x_%A_%a.out
-#SBATCH -e logs004_global_reads_decoding/%x_%A_%a.err
+#SBATCH -J LR_FOV
+#SBATCH -o logs002_local_registration/%x_%A_%a.out
+#SBATCH -e logs002_local_registration/%x_%A_%a.err
 #SBATCH -p C64M512G
-#SBATCH -N 1
-#SBATCH -c 8
-#SBATCH --time=24:00:00
-#SBATCH --array=1-25%25
+#SBATCH -c 4
+#SBATCH --time=48:00:00
+#SBATCH --array=1-1000%64
 
 set -euo pipefail
 
@@ -32,19 +31,12 @@ PROJECT_ROOT=""
 PROJECT_NAME=""
 REG_DIR_SUFFIX=""
 CORE_MATLAB_DIR=""
+ALIGN_BASIS="maxProjection"
 IMAGE_WIDTH="2304"
 IMAGE_DEPTH="38"
 REF_ROUND="1"
 CHANNEL_NUM="3"
 ROUND_NUM="6"
-INTENSITY_THRESHOLD="0.2"
-SPOTFINDING_METHOD="max3d"
-DECODING_MODE="normal"
-CODEMAP_MODE="Olympus"
-LOADING_MODE="local_registration"
-INTENSITY_THRESH_PR="0"
-VOXELSIZE="1,1,1"
-DECODING_ROUNDS="11"
 OFFSET="0"
 
 while [[ $# -gt 0 ]]; do
@@ -53,19 +45,12 @@ while [[ $# -gt 0 ]]; do
         --project_name) PROJECT_NAME="$2"; shift 2 ;;
         --reg_dir_suffix) REG_DIR_SUFFIX="$2"; shift 2 ;;
         --core_matlab_dir) CORE_MATLAB_DIR="$2"; shift 2 ;;
+        --align_basis) ALIGN_BASIS="$2"; shift 2 ;;
         --image_width) IMAGE_WIDTH="$2"; shift 2 ;;
         --image_depth) IMAGE_DEPTH="$2"; shift 2 ;;
         --ref_round) REF_ROUND="$2"; shift 2 ;;
         --channel_num) CHANNEL_NUM="$2"; shift 2 ;;
         --round_num) ROUND_NUM="$2"; shift 2 ;;
-        --intensity_threshold) INTENSITY_THRESHOLD="$2"; shift 2 ;;
-        --spotfinding_method) SPOTFINDING_METHOD="$2"; shift 2 ;;
-        --decoding_mode) DECODING_MODE="$2"; shift 2 ;;
-        --codeMap_mode) CODEMAP_MODE="$2"; shift 2 ;;
-        --loading_mode) LOADING_MODE="$2"; shift 2 ;;
-        --intensityThresh_PR) INTENSITY_THRESH_PR="$2"; shift 2 ;;
-        --voxelsize) VOXELSIZE="$2"; shift 2 ;;
-        --decoding_rounds) DECODING_ROUNDS="$2"; shift 2 ;;
         --offset) OFFSET="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) print_usage >&2; exit 2 ;;
@@ -100,45 +85,7 @@ finish() {
 }
 trap finish EXIT
 
-# Keep the six existing decoding modes distinct and data-driven.
-case "${DECODING_MODE}" in
-    seqD)
-        END_BASES="['G','A']"
-        BARCODE_MODE="regular"
-        SPLIT_LOC="[]"
-        ;;
-    seqF)
-        END_BASES="['A','A']"
-        BARCODE_MODE="regular"
-        SPLIT_LOC="[]"
-        ;;
-    seqF_real)
-        END_BASES="['A','A']"
-        BARCODE_MODE="regular"
-        SPLIT_LOC="[]"
-        ;;
-    seqDF)
-        END_BASES="['G','A','A','A']"
-        BARCODE_MODE="double"
-        SPLIT_LOC="6"
-        ;;
-    normal)
-        END_BASES="['G','G','A','A','A']"
-        BARCODE_MODE="tri"
-        SPLIT_LOC="[6,12]"
-        ;;
-    seqD_nc)
-        END_BASES="['G','A']"
-        BARCODE_MODE="single_nc"
-        SPLIT_LOC="2"
-        ;;
-    *)
-        echo "Unknown decoding mode: ${DECODING_MODE}" >&2
-        exit 1
-        ;;
-esac
-
-# Resolve the logical task to a sorted Position directory.
+# Resolve one logical task to one sorted Position directory.
 TASK_ID=$((SLURM_ARRAY_TASK_ID + OFFSET))
 POSITION_INDEX=$((TASK_ID - 1))
 DATA_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/01_data/round001"
@@ -150,7 +97,6 @@ fi
 POSITION_NAME=$(basename "${POSITIONS[POSITION_INDEX]}")
 REGISTRATION_FOLDER="02_registration${REG_DIR_SUFFIX}"
 REGISTRATION_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/${REGISTRATION_FOLDER}"
-VOXEL_SIZE="[${VOXELSIZE}]"
 
 print_slurm_info
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
@@ -159,26 +105,16 @@ echo "REGISTRATION_FOLDER=${REGISTRATION_FOLDER}"
 echo "REGISTRATION_DIR=${REGISTRATION_DIR}"
 echo "TASK_ID=${TASK_ID}"
 echo "POSITION_NAME=${POSITION_NAME}"
+echo "ALIGN_BASIS=${ALIGN_BASIS}"
 echo "IMAGE_WIDTH=${IMAGE_WIDTH}"
 echo "IMAGE_DEPTH=${IMAGE_DEPTH}"
 echo "REF_ROUND=${REF_ROUND}"
 echo "CHANNEL_NUM=${CHANNEL_NUM}"
 echo "ROUND_NUM=${ROUND_NUM}"
-echo "INTENSITY_THRESHOLD=${INTENSITY_THRESHOLD}"
-echo "SPOTFINDING_METHOD=${SPOTFINDING_METHOD}"
-echo "DECODING_MODE=${DECODING_MODE}"
-echo "CODEMAP_MODE=${CODEMAP_MODE}"
-echo "LOADING_MODE=${LOADING_MODE}"
-echo "INTENSITY_THRESH_PR=${INTENSITY_THRESH_PR}"
-echo "VOXELSIZE=${VOXELSIZE}"
-echo "DECODING_ROUNDS=${DECODING_ROUNDS}"
 echo "OFFSET=${OFFSET}"
-echo "END_BASES=${END_BASES}"
-echo "BARCODE_MODE=${BARCODE_MODE}"
-echo "SPLIT_LOC=${SPLIT_LOC}"
 echo "CORE_MATLAB_DIR=${CORE_MATLAB_DIR}"
 
 module purge
 module load matlab/2023a
 
-matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'global_reads_decoding', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'spotfinding_method', '$SPOTFINDING_METHOD', 'voxel_size', $VOXEL_SIZE, 'end_bases', $END_BASES, 'barcode_mode', '$BARCODE_MODE', 'split_loc', $SPLIT_LOC, 'intensity_threshold', $INTENSITY_THRESHOLD, 'IntensityThresh_perRound', $INTENSITY_THRESH_PR, 'loading_mode', '$LOADING_MODE', 'codeMap_mode', '$CODEMAP_MODE', 'decoding_rounds', $DECODING_ROUNDS)"
+matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); for subtile_id = 1:16; fprintf('SUBTILE START: %d\\n', subtile_id); core_matlab_new('$PROJECT_NAME', 'local_registration', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'sqrt_pieces', 4, 'subtile', subtile_id, 'align_basis_LR', '$ALIGN_BASIS'); fprintf('SUBTILE COMPLETED: %d\\n', subtile_id); end"

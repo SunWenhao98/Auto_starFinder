@@ -12,6 +12,29 @@
 #SBATCH --time=24:00:00
 #SBATCH --array=1-8%8
 
+START_TIME=$(date +%s)
+START_TIME_TEXT=$(date '+%Y-%m-%d %H:%M:%S')
+FINAL_STATUS=""
+
+finish() {
+    local exit_code=$?
+    local end_time
+    local end_time_text
+    local status
+    end_time=$(date +%s)
+    end_time_text=$(date '+%Y-%m-%d %H:%M:%S')
+    if (( exit_code == 0 )); then
+        status="${FINAL_STATUS:-SUCCESS}"
+    else
+        status="FAILED"
+    fi
+    echo "开始时间: ${START_TIME_TEXT}"
+    echo "结束时间: ${end_time_text}"
+    echo "运行时间: $((end_time - START_TIME)) seconds"
+    echo "STATUS: ${status} | SLURM_JOB_NAME=${SLURM_JOB_NAME:-N/A}"
+}
+trap finish EXIT
+
 echo "Loading Environment..."
 # module purge
 source /gpfs/share/home/2300012257/anaconda3/etc/profile.d/conda.sh

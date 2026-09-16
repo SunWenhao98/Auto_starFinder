@@ -49,26 +49,13 @@ for (recordIndex = 0; recordIndex < records.length; recordIndex++) {
 }
 
 requiredValues = newArray(
-    inputDir, gridX, gridY, firstIndex, outputName, stitchPattern,
-    layoutFile, outputTextfileName, regressionThreshold,
-    maxAvgDisplacementThreshold, absoluteDisplacementThreshold,
-    fusionMethod, computeOverlap, subpixelAccuracy,
-    computationParameters, imageOutput, outputDirectory, saveFormat
+    inputDir, outputName, stitchPattern, outputDirectory, saveFormat
 );
 requiredNames = newArray(
-    "input_dir", "grid_x", "grid_y", "first_index", "output_name", "stitch_pattern",
-    "layout_file", "output_textfile_name", "regression_threshold",
-    "max_avg_displacement_threshold", "absolute_displacement_threshold",
-    "fusion_method", "compute_overlap", "subpixel_accuracy",
-    "computation_parameters", "image_output", "output_directory", "save_format"
+    "input_dir", "output_name", "stitch_pattern", "output_directory", "save_format"
 );
-for (requiredIndex = 0; requiredIndex < requiredValues.length; requiredIndex++) {
-    if (requiredValues[requiredIndex] == "")
-        exit("Missing required macro argument: " + requiredNames[requiredIndex]);
-}
+validateRequiredValues(requiredValues, requiredNames);
 
-computeOverlapOption = booleanOption(computeOverlap, "compute_overlap");
-subpixelAccuracyOption = booleanOption(subpixelAccuracy, "subpixel_accuracy");
 if (saveFormat != "tiff" && saveFormat != "ome_tiff" && saveFormat != "ome_bigtiff")
     exit("Unknown save_format: " + saveFormat);
 
@@ -79,6 +66,21 @@ print("layoutFile = " + layoutFile);
 print("saveFormat = " + saveFormat);
 
 if (stitchPattern == "Snake_row_Right_down") {
+    requiredValues = newArray(
+        gridX, gridY, firstIndex, outputTextfileName, regressionThreshold,
+        maxAvgDisplacementThreshold, absoluteDisplacementThreshold,
+        fusionMethod, computeOverlap, subpixelAccuracy,
+        computationParameters, imageOutput
+    );
+    requiredNames = newArray(
+        "grid_x", "grid_y", "first_index", "output_textfile_name",
+        "regression_threshold", "max_avg_displacement_threshold",
+        "absolute_displacement_threshold", "fusion_method", "compute_overlap",
+        "subpixel_accuracy", "computation_parameters", "image_output"
+    );
+    validateRequiredValues(requiredValues, requiredNames);
+    computeOverlapOption = booleanOption(computeOverlap, "compute_overlap");
+    subpixelAccuracyOption = booleanOption(subpixelAccuracy, "subpixel_accuracy");
     params = "type=[Grid: snake by rows] " +
             "order=[Right & Down] " +
             "grid_size_x=" + gridX + " " +
@@ -103,6 +105,19 @@ if (stitchPattern == "Snake_row_Right_down") {
     saveProjection(outputDirectory, outputName, saveFormat);
 
 } else if (stitchPattern == "Positions_from_file") {
+    requiredValues = newArray(
+        layoutFile, regressionThreshold, maxAvgDisplacementThreshold,
+        absoluteDisplacementThreshold, fusionMethod, computeOverlap,
+        subpixelAccuracy, computationParameters, imageOutput
+    );
+    requiredNames = newArray(
+        "layout_file", "regression_threshold", "max_avg_displacement_threshold",
+        "absolute_displacement_threshold", "fusion_method", "compute_overlap",
+        "subpixel_accuracy", "computation_parameters", "image_output"
+    );
+    validateRequiredValues(requiredValues, requiredNames);
+    computeOverlapOption = booleanOption(computeOverlap, "compute_overlap");
+    subpixelAccuracyOption = booleanOption(subpixelAccuracy, "subpixel_accuracy");
     params = "type=[Positions from file] " +
             "order=[Defined by TileConfiguration] " +
             "directory=[" + inputDir + "] " +
@@ -181,6 +196,11 @@ if (stitchPattern == "Snake_row_Right_down") {
     saveProjection(outputDirectory, outputName, saveFormat);
 
 } else if (stitchPattern == "Positions_from_file_mosaic") {
+    requiredValues = newArray(layoutFile, fusionMethod, subpixelAccuracy, imageOutput);
+    requiredNames = newArray(
+        "layout_file", "fusion_method", "subpixel_accuracy", "image_output"
+    );
+    validateRequiredValues(requiredValues, requiredNames);
     mosaicSubpixelAccuracyOption = booleanOption(subpixelAccuracy, "subpixel_accuracy");
     params = "type=[Positions from file] " +
             "order=[Defined by TileConfiguration] " +
@@ -197,6 +217,13 @@ if (stitchPattern == "Snake_row_Right_down") {
 
 } else {
     exit("Unknown stitch_pattern: " + stitchPattern);
+}
+
+function validateRequiredValues(values, names) {
+    for (requiredIndex = 0; requiredIndex < values.length; requiredIndex++) {
+        if (values[requiredIndex] == "")
+            exit("Missing required macro argument: " + names[requiredIndex]);
+    }
 }
 
 function booleanOption(value, optionName) {
