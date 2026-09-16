@@ -3,14 +3,31 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import json
 import os
 import shlex
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 
 ArgMap = tuple[tuple[str, str], ...]
-LoadedConfig = tuple[configparser.ConfigParser, tuple[str, ...]]
+
+
+@dataclass(frozen=True, slots=True)
+class SampleMetadata:
+    project_name: str
+    fov_count: int
+    position_offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedConfig:
+    parser: configparser.ConfigParser
+    section_names: tuple[str, ...]
+    samples_by_name: Mapping[str, SampleMetadata]
+    sample_by_section: Mapping[str, SampleMetadata]
 
 
 @dataclass(frozen=True)
@@ -24,6 +41,7 @@ class StepSpec:
     args: ArgMap
     log_root_key: str = "decode_log"
     script_dir_from_wrapper: bool = False
+    sample_position_offset_flag: str | None = None
 
 
 COMMON_ARGS: ArgMap = (
@@ -193,13 +211,13 @@ STEP_SPECS = {
             ("prepare_tile_config_output_config", "--output_config"),
             ("prepare_tile_config_invert_y", "--invert_y"),
             ("prepare_tile_config_maf_file", "--maf_file"),
-            ("prepare_tile_config_position_offset", "--position_offset"),
             ("prepare_tile_config_microscope", "--microscope"),
             ("prepare_tile_config_run_fiji_fusion_preflight", "--run_fiji_fusion_preflight"),
             ("prepare_tile_config_fiji_fusion_preflight_report", "--fiji_fusion_preflight_report"),
         ),
         log_root_key="stitch_log",
         script_dir_from_wrapper=True,
+        sample_position_offset_flag="--position_offset",
     ),
     "fiji_stitch_initial": StepSpec(
         "run_fiji_stitch_initial", "script_fiji_stitch_initial", "fiji_stitch_initial",
@@ -378,6 +396,34 @@ STEP_SPECS = {
 }
 
 
+def _parse_samples_registry(raw: str) -> tuple[SampleMetadata, ...]:
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        parsed: dict[str, object] = {}
+        for name, count in pairs:
+            if name in parsed:
+                raise ValueError(f"Duplicate sample name: {name}")
+            parsed[name] = count
+        return parsed
+
+    try:
+        registry: object = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
+    except (json.JSONDecodeError, ValueError) as error:
+        raise ValueError("samples must be a strict JSON object with unique keys") from error
+    if not isinstance(registry, dict) or not registry:
+        raise ValueError("samples must be a non-empty JSON object")
+
+    samples: list[SampleMetadata] = []
+    position_offset = 0
+    for project_name, fov_count in registry.items():
+        if not project_name:
+            raise ValueError("sample names must not be empty")
+        if type(fov_count) is not int or fov_count <= 0:
+            raise ValueError(f"sample count for {project_name} must be a positive integer")
+        samples.append(SampleMetadata(project_name, fov_count, position_offset))
+        position_offset += fov_count
+    return tuple(samples)
+
+
 def load_config(config_path: Path) -> LoadedConfig:
     parser = configparser.ConfigParser(
         interpolation=configparser.BasicInterpolation(),
@@ -388,7 +434,26 @@ def load_config(config_path: Path) -> LoadedConfig:
     sections = tuple(sorted(name for name in parser.sections() if name.startswith("JOB_")))
     if not sections:
         raise ValueError("No [JOB_*] sections found")
-    return parser, sections
+    raw_samples = parser.defaults().get("samples")
+    if raw_samples is None:
+        raise ValueError("Missing required [DEFAULT].samples registry")
+    samples = _parse_samples_registry(raw_samples)
+    samples_by_name = MappingProxyType({sample.project_name: sample for sample in samples})
+    sample_by_section: dict[str, SampleMetadata] = {}
+    for section_name in sections:
+        project_name = parser[section_name]["project_name"]
+        try:
+            sample_by_section[section_name] = samples_by_name[project_name]
+        except KeyError as error:
+            raise ValueError(
+                f"Unknown project_name for {section_name}: {project_name}"
+            ) from error
+    return LoadedConfig(
+        parser,
+        sections,
+        samples_by_name,
+        MappingProxyType(sample_by_section),
+    )
 
 
 def _quote(token: str) -> str:
@@ -735,7 +800,11 @@ def _render_command(
     return rendered
 
 
-def _base_command(section: configparser.SectionProxy, spec: StepSpec) -> list[str]:
+def _base_command(
+    section: configparser.SectionProxy,
+    spec: StepSpec,
+    sample: SampleMetadata,
+) -> list[str]:
     wrapper_path = Path(section[spec.wrapper_key])
     command = [
         "sbatch",
@@ -749,32 +818,33 @@ def _base_command(section: configparser.SectionProxy, spec: StepSpec) -> list[st
         command.extend(("--script_dir", str(wrapper_path.parent)))
     for config_key, wrapper_flag in spec.args:
         command.extend((wrapper_flag, section[config_key]))
+    if spec.sample_position_offset_flag is not None:
+        command.extend((spec.sample_position_offset_flag, str(sample.position_offset)))
     return command
 
 
 def render_single_submission(
     section: configparser.SectionProxy,
     spec: StepSpec,
+    sample: SampleMetadata,
     dependency: str | None,
 ) -> tuple[list[str], str]:
     variable = spec.prefix.upper()
     return _render_command(
-        variable, _base_command(section, spec), dependency, 1, section, spec
+        variable, _base_command(section, spec, sample), dependency, 1, section, spec
     ), f"${{{variable}_JOB_ID}}"
 
 
 def render_array_submissions(
     section: configparser.SectionProxy,
     spec: StepSpec,
+    sample: SampleMetadata,
     dependency: str | None,
 ) -> tuple[list[str], str]:
-    fov_counts = section.getint("fov_counts")
     tasks_per_fov = section.getint(f"{spec.prefix}_array_tasks")
-    if fov_counts <= 0:
-        raise ValueError("fov_counts must be greater than zero")
     if tasks_per_fov <= 0:
         raise ValueError(f"{spec.prefix}_array_tasks must be greater than zero")
-    total = fov_counts * tasks_per_fov
+    total = sample.fov_count * tasks_per_fov
     parallel = section.getint(f"{spec.prefix}_parallel_tasks")
     chunk_limit = section.getint(f"{spec.prefix}_chunk_tasks")
     base_offset = section.getint(f"{spec.prefix}_offset")
@@ -782,7 +852,7 @@ def render_array_submissions(
     lines = [f"{variable}_JOB_IDS=()"]
     for start in range(1, total + 1, chunk_limit):
         size = min(chunk_limit, total - start + 1)
-        command = _base_command(section, spec)
+        command = _base_command(section, spec, sample)
         command[8:8] = [f"--array=1-{size}%{parallel}"]
         offset_flag = next(index for index, token in enumerate(command) if token == "--offset")
         command[offset_flag + 1] = str(base_offset + start - 1)
@@ -793,9 +863,11 @@ def render_array_submissions(
 
 
 def render_submission_script(config: LoadedConfig) -> str:
-    parser, section_names = config
+    parser = config.parser
+    section_names = config.section_names
     for section_name in section_names:
         section = parser[section_name]
+        sample = config.sample_by_section[section_name]
         if section.getboolean("run_local_reg_subtile", fallback=False) and section.getboolean(
             "run_local_reg_fov", fallback=False
         ):
@@ -843,9 +915,13 @@ def render_submission_script(config: LoadedConfig) -> str:
             )
             match spec.submission_type:
                 case "array":
-                    submission, dependency = render_array_submissions(section, spec, dependency)
+                    submission, dependency = render_array_submissions(
+                        section, spec, sample, dependency
+                    )
                 case "single":
-                    submission, dependency = render_single_submission(section, spec, dependency)
+                    submission, dependency = render_single_submission(
+                        section, spec, sample, dependency
+                    )
                 case unexpected:
                     raise ValueError(f"Unsupported submission type: {unexpected}")
             lines.extend(submission)
