@@ -59,23 +59,6 @@ IMAGE_ARGS: ArgMap = (
 CORE_MATLAB_ARG: ArgMap = (("core_matlab_dir", "--core_matlab_dir"),)
 CONDA_SH_ARG: ArgMap = (("conda_sh", "--conda_sh"),)
 FIJI_DIR_ARG: ArgMap = (("fiji_dir", "--fiji_dir"),)
-CELLREADS_ARGS: ArgMap = CONDA_SH_ARG + COMMON_ARGS + (
-    ("image_width", "--image_width"),
-    ("cellreads_registration_if_dirname", "--if_dirname"),
-    ("cellreads_registered_tile_config", "--tile_registered_name"),
-    ("cellreads_output_dirname", "--output_dirname"),
-    ("cellreads_seg_method", "--seg_method"),
-    ("cellreads_output_suffix", "--output_suffix"),
-    ("cellreads_clean_gene_match_string", "--clean_gene_match_string"),
-    ("cellreads_clustermap_output_label", "--clustermap_output_label"),
-)
-COUNT_MATRIX_ARGS: ArgMap = CONDA_SH_ARG + (
-    ("project_root", "--project_root"),
-    ("project_name", "--project_name"),
-    ("cellreads_output_dirname", "--output_dirname"),
-    ("cellreads_seg_method", "--seg_method"),
-    ("cellreads_output_suffix", "--output_suffix"),
-)
 
 
 STEP_ORDER = (
@@ -84,7 +67,6 @@ STEP_ORDER = (
     "prepare_tile_config", "fiji_stitch_initial", "ashlar_stitch_initial",
     "prepare_moveimages", "fiji_stitch_mosaic", "ashlar_stitch_mosaic",
     "pyreg", "matreg", "reg_compare", "transform_apply",
-    "cellreads_integration", "csv_to_count_matrix",
 )
 STEP_SPECS = {
     "gr": StepSpec("run_global_reg", "script_global_reg", "GR", "array", "gr", "logs001_global_registration", CORE_MATLAB_ARG + COMMON_ARGS + (
@@ -409,20 +391,6 @@ STEP_SPECS = {
             ("transform_apply_overwrite", "--overwrite"),
         ),
         log_root_key="stitch_log",
-        script_dir_from_wrapper=True,
-    ),
-    "cellreads_integration": StepSpec(
-        "run_cellreads_integration", "script_cellreads_integration",
-        "cellreads_integration", "single", "cellreads", "logs001_segResultsStitch",
-        CELLREADS_ARGS,
-        log_root_key="integration_log",
-        script_dir_from_wrapper=True,
-    ),
-    "csv_to_count_matrix": StepSpec(
-        "run_csv_to_count_matrix", "script_csv_to_count_matrix",
-        "csv_to_count_matrix", "single", "count_matrix", "logs002_csv2CountMatrix",
-        COUNT_MATRIX_ARGS,
-        log_root_key="integration_log",
         script_dir_from_wrapper=True,
     ),
 }
