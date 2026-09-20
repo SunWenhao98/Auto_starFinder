@@ -899,7 +899,6 @@ def render_submission_script(config: LoadedConfig) -> str:
     section_names = config.section_names
     for section_name in section_names:
         section = parser[section_name]
-        sample = config.sample_by_section[section_name]
         if section.getboolean("run_local_reg_subtile", fallback=False) and section.getboolean(
             "run_local_reg_fov", fallback=False
         ):
@@ -924,6 +923,7 @@ def render_submission_script(config: LoadedConfig) -> str:
     ]
     for job_index, section_name in enumerate(section_names, start=1):
         section = parser[section_name]
+        sample = config.sample_by_section[section_name]
         enabled = [(name, STEP_SPECS[name]) for name in STEP_ORDER if section.getboolean(STEP_SPECS[name].run_key, fallback=False)]
         if not enabled:
             continue
