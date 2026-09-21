@@ -62,7 +62,7 @@ def _parse_maf_xml(maf_path: Path):
     return positions
 
 # 视野排布可视化函数:用于人为检查坐标是否有异常（如错位、蛇形走位方向错误等）
-def plot_tile_positions(df, tile_size_px, non_overlap_len, output_dir, show_labels=True):
+def plot_tile_positions(df, tile_size_px, non_overlap_len, output_dir, project_name, show_labels=True):
     if len(df) == 0:
         logging.warning("No data to plot")
         return None, None
@@ -83,7 +83,7 @@ def plot_tile_positions(df, tile_size_px, non_overlap_len, output_dir, show_labe
     fig1, ax1 = plt.subplots(figsize=(20, 16))
     plt.style.use('seaborn-v0_8-darkgrid')
     
-    ax1.set_title('Tile Layout Visualization (Leica)', fontsize=16, fontweight='bold', pad=20)
+    ax1.set_title(f'Tile Layout Visualization (Leica) | Sample: {project_name}', fontsize=16, fontweight='bold', pad=20)
     ax1.set_xlabel('X Position (pixels)', fontsize=12)
     ax1.set_ylabel('Y Position (pixels)', fontsize=12)
     ax1.set_aspect('equal')
@@ -203,6 +203,7 @@ def main():
     parser.add_argument('--input_dir', type=Path, required=True)
     parser.add_argument('--maf_file', type=Path, required=True)
     parser.add_argument('--output_dir', type=Path, required=True)
+    parser.add_argument('--project_name', type=str, required=True)
     parser.add_argument('--match_string', type=str, default='C1')
     parser.add_argument('--pixel_size_um', type=float, default=0.142)
     parser.add_argument('--image_xy', type=int, default=2048)
@@ -291,6 +292,7 @@ def main():
             tile_size_px=args.image_xy,
             non_overlap_len=args.image_xy * (1 - args.overlap_ratio),
             output_dir=args.output_dir,
+            project_name=args.project_name,
             show_labels=True
         )
         # 生成CSV总结文件

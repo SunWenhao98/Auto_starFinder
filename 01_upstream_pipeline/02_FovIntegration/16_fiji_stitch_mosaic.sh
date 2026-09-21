@@ -122,6 +122,7 @@ REGISTRATION_FOLDER="02_registration${REG_DIR_SUFFIX}"
 REG_ROOT="${PROJECT_ROOT}/${PROJECT_NAME}/${REGISTRATION_FOLDER}"
 WORK_DIR="${REG_ROOT}/${STITCHING_WORKDIR}"
 INPUT_CONFIG_FILE="${WORK_DIR}/${INPUT_CONFIG}"
+STITCHED_DIR="${WORK_DIR}/stitched${REG_DIR_SUFFIX}"
 print_slurm_info
 echo "[PARAM] PROJECT_ROOT=${PROJECT_ROOT}"
 echo "[PARAM] PROJECT_NAME=${PROJECT_NAME}"
@@ -171,9 +172,11 @@ for CHANNEL_NAME in "${CHANNEL_ARRAY[@]}"; do
         ome_bigtiff) EXPECTED_OUTPUT_FILE="${OUTPUT_DIRECTORY}/${OUTPUT_NAME}_2d_Fiji.ome.btf" ;;
         *) echo "Error: unsupported --save_format: $SAVE_FORMAT" >&2; exit 1 ;;
     esac
+    STITCHED_OUTPUT_FILE="${STITCHED_DIR}/${PROJECT_NAME}_$(basename "$EXPECTED_OUTPUT_FILE")"
     echo "[COPY] ${INPUT_CONFIG_FILE} -> ${CHANNEL_LAYOUT_FILE}"
     echo "[COMMAND] ${FIJI_EXECUTABLE} --headless --console ${BSH_FILE}"
     echo "[OUTPUT] ${EXPECTED_OUTPUT_FILE}"
+    echo "[OUTPUT] ${STITCHED_OUTPUT_FILE}"
     if [[ "$DRY_RUN" == "true" ]]; then
         continue
     fi
@@ -181,6 +184,10 @@ for CHANNEL_NAME in "${CHANNEL_ARRAY[@]}"; do
     export INPUT_DIR OUTPUT_NAME STITCH_PATTERN LAYOUT_FILE OUTPUT_DIRECTORY
     "$FIJI_EXECUTABLE" --headless --console "$BSH_FILE"
     [[ -s "$EXPECTED_OUTPUT_FILE" ]] || { echo "Error: Fiji output missing: $EXPECTED_OUTPUT_FILE" >&2; exit 1; }
+    mkdir -p "$STITCHED_DIR"
+    cp -f -- "$EXPECTED_OUTPUT_FILE" "$STITCHED_OUTPUT_FILE"
+    [[ -s "$STITCHED_OUTPUT_FILE" ]] || { echo "Error: copied stitched output missing or empty: $STITCHED_OUTPUT_FILE" >&2; exit 1; }
+    echo "[COPY] ${EXPECTED_OUTPUT_FILE} -> ${STITCHED_OUTPUT_FILE}"
 done
 if [[ "$DRY_RUN" == "true" ]]; then
     FINAL_STATUS="DRY_RUN_DONE"

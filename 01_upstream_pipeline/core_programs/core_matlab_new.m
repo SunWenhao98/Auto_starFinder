@@ -382,32 +382,32 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
                                                   'ref_round', p.Results.ref_round, ...
                                                   'alignBasis', p.Results.align_basis);
 
-            % Save global registered images for each round
-            for r = 1:size(sdata.registeredImages, 5) % 遍历每个 round
-                % if ismember(r, [1, 3, 5, 7, 9])  % 只保存特定轮次
+            % % Save global registered images for each round
+            % for r = 1:size(sdata.registeredImages, 5) % 遍历每个 round
+            %     % if ismember(r, [1, 3, 5, 7, 9])  % 只保存特定轮次
 
-                for c = 1:size(sdata.registeredImages, 4) % 遍历每个 channel
-                    global_registered_img_name = fullfile(interm_output_dir, ...
-                        strcat(p.Results.tile, "_global_registered_round_", num2str(r), "_channel_", num2str(c), ".tif"));
+            %     for c = 1:size(sdata.registeredImages, 4) % 遍历每个 channel
+            %         global_registered_img_name = fullfile(interm_output_dir, ...
+            %             strcat(p.Results.tile, "_global_registered_round_", num2str(r), "_channel_", num2str(c), ".tif"));
                 
-                    if exist(global_registered_img_name, 'file') == 2
-                        delete(global_registered_img_name);
-                    end
+            %         if exist(global_registered_img_name, 'file') == 2
+            %             delete(global_registered_img_name);
+            %         end
                 
-                    for j = 1:size(sdata.registeredImages, 3) % 遍历每个 z-slice
-                        img_slice = squeeze(sdata.registeredImages(:, :, j, c, r)); % 获取单个 z-slice
-                        if j == 1
-                            imwrite(img_slice, global_registered_img_name, 'WriteMode', 'overwrite');
-                        else
-                            imwrite(img_slice, global_registered_img_name, 'WriteMode', 'append');
-                        end
-                    end
+            %         for j = 1:size(sdata.registeredImages, 3) % 遍历每个 z-slice
+            %             img_slice = squeeze(sdata.registeredImages(:, :, j, c, r)); % 获取单个 z-slice
+            %             if j == 1
+            %                 imwrite(img_slice, global_registered_img_name, 'WriteMode', 'overwrite');
+            %             else
+            %                 imwrite(img_slice, global_registered_img_name, 'WriteMode', 'append');
+            %             end
+            %         end
                 
-                    disp(strcat("Wrote ", global_registered_img_name, " to file"));
-                end
+            %         disp(strcat("Wrote ", global_registered_img_name, " to file"));
+            %     end
 
-                % end
-            end
+            %     % end
+            % end
 
             % Save registeredImages as a complete mat file
             registeredImages_mat_file = fullfile(curr_out_path, strcat('globalRegistered_image.mat'));
@@ -427,35 +427,35 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
             %     disp('Did not write round1 merged tif. Probably already exists, but double-check');
             % end
 
-            % save every round channel-merged registered image
-            % Save global registered images for each round
-            for r = 1:size(sdata.registeredImages, 5) % 遍历每个 round
-                % if ismember(r, [1, 3, 5, 7, 9])  % 只保存特定轮次
+            % % save every round channel-merged registered image
+            % % Save global registered images for each round
+            % for r = 1:size(sdata.registeredImages, 5) % 遍历每个 round
+            %     % if ismember(r, [1, 3, 5, 7, 9])  % 只保存特定轮次
 
 
-                global_registered_img_name = fullfile(interm_output_dir, ...
-                    strcat(p.Results.tile, "_global_registered_round", num2str(r), "channel-merged",".tif"));
+            %     global_registered_img_name = fullfile(interm_output_dir, ...
+            %         strcat(p.Results.tile, "_global_registered_round", num2str(r), "channel-merged",".tif"));
             
-                if exist(global_registered_img_name, 'file') == 2
-                    delete(global_registered_img_name);
-                end
+            %     if exist(global_registered_img_name, 'file') == 2
+            %         delete(global_registered_img_name);
+            %     end
             
-                for j = 1:size(sdata.registeredImages, 3) % 遍历每个 z-slice
-                    img_slice = squeeze(sdata.registeredImages(:, :, j, 1:spot_channels, r)); % 获取斑点通道的单个 z-slice
-                    img_slice = squeeze(max(img_slice, [], 3)); % 合并 channel
+            %     for j = 1:size(sdata.registeredImages, 3) % 遍历每个 z-slice
+            %         img_slice = squeeze(sdata.registeredImages(:, :, j, 1:spot_channels, r)); % 获取斑点通道的单个 z-slice
+            %         img_slice = squeeze(max(img_slice, [], 3)); % 合并 channel
 
-                    if j == 1
-                        imwrite(img_slice, global_registered_img_name, 'WriteMode', 'overwrite');
-                    else
-                        imwrite(img_slice, global_registered_img_name, 'WriteMode', 'append');
-                    end
-                end
+            %         if j == 1
+            %             imwrite(img_slice, global_registered_img_name, 'WriteMode', 'overwrite');
+            %         else
+            %             imwrite(img_slice, global_registered_img_name, 'WriteMode', 'append');
+            %         end
+            %     end
             
-                disp(strcat("Wrote ", global_registered_img_name, " to file"));
+            %     disp(strcat("Wrote ", global_registered_img_name, " to file"));
 
 
-                % end
-            end
+            %     % end
+            % end
 
             fclose(sdata.log);
             

@@ -63,7 +63,6 @@ CELLREADS_ARGS: ArgMap = CONDA_SH_ARG + COMMON_ARGS + (
     ("image_width", "--image_width"),
     ("cellreads_registration_if_dirname", "--if_dirname"),
     ("cellreads_registered_tile_config", "--tile_registered_name"),
-    ("cellreads_output_dirname", "--output_dirname"),
     ("cellreads_seg_method", "--seg_method"),
     ("cellreads_output_suffix", "--output_suffix"),
     ("cellreads_clean_gene_match_string", "--clean_gene_match_string"),
@@ -72,9 +71,10 @@ CELLREADS_ARGS: ArgMap = CONDA_SH_ARG + COMMON_ARGS + (
 COUNT_MATRIX_ARGS: ArgMap = CONDA_SH_ARG + (
     ("project_root", "--project_root"),
     ("project_name", "--project_name"),
-    ("cellreads_output_dirname", "--output_dirname"),
+    ("regDir_suffix", "--reg_dir_suffix"),
     ("cellreads_seg_method", "--seg_method"),
     ("cellreads_output_suffix", "--output_suffix"),
+    ("cellreads_clean_gene_match_string", "--clean_gene_match_string"),
 )
 
 

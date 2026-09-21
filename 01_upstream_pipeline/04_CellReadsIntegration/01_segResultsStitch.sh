@@ -15,7 +15,7 @@ set -euo pipefail
 
 usage() {
     printf '%s\n' \
-        "Usage: 01_segResultsStitch.sh --script_dir DIR --conda_sh FILE --project_root DIR --project_name NAME --reg_dir_suffix SUFFIX --image_width PX --if_dirname NAME --tile_registered_name FILE --output_dirname NAME --seg_method NAME --output_suffix SUFFIX --clean_gene_match_string TEXT --clustermap_output_label LABEL"
+        "Usage: 01_segResultsStitch.sh --script_dir DIR --conda_sh FILE --project_root DIR --project_name NAME --reg_dir_suffix SUFFIX --image_width PX --if_dirname NAME --tile_registered_name FILE --seg_method NAME --output_suffix SUFFIX --clean_gene_match_string TEXT --clustermap_output_label LABEL"
 }
 
 start_time=$(date +%s)
@@ -41,7 +41,6 @@ REG_DIR_SUFFIX=""
 IMAGE_WIDTH=""
 IF_DIRNAME=""
 TILE_REGISTERED_NAME=""
-OUTPUT_DIRNAME=""
 SEG_METHOD=""
 OUTPUT_SUFFIX=""
 CLEAN_GENE_MATCH_STRING=""
@@ -57,7 +56,6 @@ while (( $# )); do
         --image_width) IMAGE_WIDTH="$2"; shift 2 ;;
         --if_dirname) IF_DIRNAME="$2"; shift 2 ;;
         --tile_registered_name) TILE_REGISTERED_NAME="$2"; shift 2 ;;
-        --output_dirname) OUTPUT_DIRNAME="$2"; shift 2 ;;
         --seg_method) SEG_METHOD="$2"; shift 2 ;;
         --output_suffix) OUTPUT_SUFFIX="$2"; shift 2 ;;
         --clean_gene_match_string) CLEAN_GENE_MATCH_STRING="$2"; shift 2 ;;
@@ -70,7 +68,7 @@ done
 for required_value in \
     "$SCRIPT_DIR" "$CONDA_SH" "$PROJECT_ROOT" "$PROJECT_NAME" \
     "$IMAGE_WIDTH" "$IF_DIRNAME" "$TILE_REGISTERED_NAME" \
-    "$OUTPUT_DIRNAME" "$SEG_METHOD" "$OUTPUT_SUFFIX" \
+    "$SEG_METHOD" "$OUTPUT_SUFFIX" \
     "$CLEAN_GENE_MATCH_STRING" "$CLUSTERMAP_OUTPUT_LABEL"; do
     if [[ -z "$required_value" ]]; then
         echo "Missing required argument" >&2
@@ -86,7 +84,8 @@ TILE_DIR="${REG_ROOT}/${IF_DIRNAME}"
 TILE_INITIAL="${TILE_DIR}/TileConfiguration.initial.txt"
 TILE_REGISTERED="${TILE_DIR}/${TILE_REGISTERED_NAME}"
 TILE_GRID="${TILE_DIR}/tile_summary.csv"
-OUTPUT_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/${OUTPUT_DIRNAME}"
+INTEGRATION_ROOT="${PROJECT_ROOT}/${PROJECT_NAME}/03_integration${REG_DIR_SUFFIX}"
+OUTPUT_DIR="${INTEGRATION_ROOT}/cr_integ_${OUTPUT_SUFFIX}-${CLEAN_GENE_MATCH_STRING}"
 COORDS_OUTPUT="${OUTPUT_DIR}/coords.csv"
 TUNED_COORDS_OUTPUT="${OUTPUT_DIR}/tuned_coords.csv"
 CELL_CENTERS_OUTPUT="${OUTPUT_DIR}/cell_centers_${PROJECT_NAME}_${SEG_METHOD}_${OUTPUT_SUFFIX}.csv"

@@ -13,15 +13,16 @@ SCRIPT_DIR=""
 CONDA_SH=""
 PROJECT_ROOT=""
 PROJECT_NAME=""
-OUTPUT_DIRNAME=""
+REG_DIR_SUFFIX=""
 SEG_METHOD=""
 OUTPUT_SUFFIX=""
+CLEAN_GENE_MATCH_STRING=""
 
 usage() {
     cat <<'EOF'
 Usage: 02_csv2CountMatrix.sh --script_dir DIR --conda_sh FILE \
-    --project_root DIR --project_name NAME --output_dirname NAME \
-    --seg_method NAME --output_suffix NAME
+    --project_root DIR --project_name NAME --reg_dir_suffix SUFFIX \
+    --seg_method NAME --output_suffix NAME --clean_gene_match_string TEXT
 EOF
 }
 
@@ -31,16 +32,18 @@ while (( $# )); do
         --conda_sh) CONDA_SH="$2"; shift 2 ;;
         --project_root) PROJECT_ROOT="$2"; shift 2 ;;
         --project_name) PROJECT_NAME="$2"; shift 2 ;;
-        --output_dirname) OUTPUT_DIRNAME="$2"; shift 2 ;;
+        --reg_dir_suffix) REG_DIR_SUFFIX="$2"; shift 2 ;;
         --seg_method) SEG_METHOD="$2"; shift 2 ;;
         --output_suffix) OUTPUT_SUFFIX="$2"; shift 2 ;;
+        --clean_gene_match_string) CLEAN_GENE_MATCH_STRING="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'ERROR: unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
 done
 
 for required_name in \
-    SCRIPT_DIR CONDA_SH PROJECT_ROOT PROJECT_NAME OUTPUT_DIRNAME SEG_METHOD OUTPUT_SUFFIX
+    SCRIPT_DIR CONDA_SH PROJECT_ROOT PROJECT_NAME SEG_METHOD OUTPUT_SUFFIX \
+    CLEAN_GENE_MATCH_STRING
 do
     if [[ -z "${!required_name}" ]]; then
         printf 'ERROR: required argument is empty: %s\n' "$required_name" >&2
@@ -49,7 +52,8 @@ do
 done
 
 RUNNER="${SCRIPT_DIR}/csv2CountMatrix.py"
-OUTPUT_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/${OUTPUT_DIRNAME}"
+INTEGRATION_ROOT="${PROJECT_ROOT}/${PROJECT_NAME}/03_integration${REG_DIR_SUFFIX}"
+OUTPUT_DIR="${INTEGRATION_ROOT}/cr_integ_${OUTPUT_SUFFIX}-${CLEAN_GENE_MATCH_STRING}"
 INPUT_CSV="${OUTPUT_DIR}/remain_reads_${PROJECT_NAME}_${SEG_METHOD}_${OUTPUT_SUFFIX}.csv"
 OUTPUT_H5AD="${OUTPUT_DIR}/adata_${PROJECT_NAME}_${SEG_METHOD}_${OUTPUT_SUFFIX}.h5ad"
 START_TIME=$(date +%s)

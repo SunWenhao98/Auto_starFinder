@@ -149,7 +149,7 @@ echo "[PARAM] RUN_FIJI_FUSION_PREFLIGHT=${RUN_FIJI_FUSION_PREFLIGHT}"
 case "$MICROSCOPE" in
     Leica)
         PY_SCRIPT="${SCRIPT_DIR}/p12_leica2Stitching_configuration.py"
-        MICROSCOPE_ARGS=(--maf_file "$MAF_FILE" --position_offset "$POSITION_OFFSET")
+        MICROSCOPE_ARGS=(--maf_file "$MAF_FILE" --position_offset "$POSITION_OFFSET" --project_name "$PROJECT_NAME")
         ;;
     Olympus)
         PY_SCRIPT="${SCRIPT_DIR}/p12_vsi2Stitching_configuration.py"

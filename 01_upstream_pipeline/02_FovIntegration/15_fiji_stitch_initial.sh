@@ -140,6 +140,8 @@ case "$SAVE_FORMAT" in
     ome_bigtiff) EXPECTED_OUTPUT_FILE="${OUTPUT_DIRECTORY}/${OUTPUT_NAME}_2d_Fiji.ome.btf" ;;
     *) echo "Error: unsupported --save_format: $SAVE_FORMAT" >&2; exit 1 ;;
 esac
+STITCHED_DIR="${WORK_DIR}/stitched${REG_DIR_SUFFIX}"
+STITCHED_OUTPUT_FILE="${STITCHED_DIR}/${PROJECT_NAME}_$(basename "$EXPECTED_OUTPUT_FILE")"
 
 print_slurm_info
 echo "[PARAM] PROJECT_ROOT=${PROJECT_ROOT}"
@@ -170,6 +172,7 @@ echo "[PATH] INPUT_DIR=${INPUT_DIR}"
 echo "[PATH] INPUT_CONFIG_FILE=${INPUT_CONFIG_FILE}"
 echo "[PATH] OUTPUT_CONFIG_FILE=${OUTPUT_CONFIG_FILE}"
 echo "[PATH] EXPECTED_OUTPUT_FILE=${EXPECTED_OUTPUT_FILE}"
+echo "[PATH] STITCHED_OUTPUT_FILE=${STITCHED_OUTPUT_FILE}"
 echo "[PATH] BSH_FILE=${BSH_FILE}"
 echo "[PATH] FIJI_DIR=${FIJI_DIR}"
 echo "[PATH] FIJI_EXECUTABLE=${FIJI_EXECUTABLE}"
@@ -197,3 +200,7 @@ export SUBPIXEL_ACCURACY COMPUTATION_PARAMETERS IMAGE_OUTPUT OUTPUT_DIRECTORY SA
 [[ -s "$CHANNEL_REGISTERED_CONFIG" ]] || { echo "Error: registered config missing or empty: $CHANNEL_REGISTERED_CONFIG" >&2; exit 1; }
 cp "$CHANNEL_REGISTERED_CONFIG" "$OUTPUT_CONFIG_FILE"
 [[ -s "$OUTPUT_CONFIG_FILE" ]] || { echo "Error: copied config missing or empty: $OUTPUT_CONFIG_FILE" >&2; exit 1; }
+mkdir -p "$STITCHED_DIR"
+cp -f -- "$EXPECTED_OUTPUT_FILE" "$STITCHED_OUTPUT_FILE"
+[[ -s "$STITCHED_OUTPUT_FILE" ]] || { echo "Error: copied stitched output missing or empty: $STITCHED_OUTPUT_FILE" >&2; exit 1; }
+echo "[COPY] ${EXPECTED_OUTPUT_FILE} -> ${STITCHED_OUTPUT_FILE}"
