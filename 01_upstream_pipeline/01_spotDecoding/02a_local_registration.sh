@@ -11,6 +11,7 @@ set -euo pipefail
 
 print_usage() {
     echo "Usage: $0 --project_root PATH --project_name NAME --reg_dir_suffix SUFFIX [options]"
+    echo "--cleanup_gr_subtile_mat false：仅接受 true/false；开启后成功 subtile 的 GR 输入被删除。"
 }
 
 print_slurm_info() {
@@ -38,6 +39,7 @@ REF_ROUND="1"
 CHANNEL_NUM="3"
 ROUND_NUM="6"
 OFFSET="0"
+CLEANUP_GR_SUBTILE_MAT="false"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -52,10 +54,16 @@ while [[ $# -gt 0 ]]; do
         --channel_num) CHANNEL_NUM="$2"; shift 2 ;;
         --round_num) ROUND_NUM="$2"; shift 2 ;;
         --offset) OFFSET="$2"; shift 2 ;;
+        --cleanup_gr_subtile_mat) CLEANUP_GR_SUBTILE_MAT="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) print_usage >&2; exit 2 ;;
     esac
 done
+
+if [[ "$CLEANUP_GR_SUBTILE_MAT" != "true" && "$CLEANUP_GR_SUBTILE_MAT" != "false" ]]; then
+    echo "--cleanup_gr_subtile_mat 只接受 true/false。" >&2
+    exit 2
+fi
 
 if [[ -z "${CORE_MATLAB_DIR}" || ! -d "${CORE_MATLAB_DIR}" ]]; then
     echo "--core_matlab_dir must be an existing directory." >&2
@@ -116,8 +124,9 @@ echo "CHANNEL_NUM=${CHANNEL_NUM}"
 echo "ROUND_NUM=${ROUND_NUM}"
 echo "OFFSET=${OFFSET}"
 echo "CORE_MATLAB_DIR=${CORE_MATLAB_DIR}"
+echo "cleanup_gr_subtile_mat=$CLEANUP_GR_SUBTILE_MAT"
 
 module purge
 module load matlab/2023a
 
-matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'local_registration', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'sqrt_pieces', 4, 'subtile', $SUBTILE_ID, 'align_basis_LR', '$ALIGN_BASIS')"
+matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'local_registration', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'sqrt_pieces', 4, 'subtile', $SUBTILE_ID, 'align_basis_LR', '$ALIGN_BASIS', 'cleanup_gr_subtile_mat', $CLEANUP_GR_SUBTILE_MAT);"

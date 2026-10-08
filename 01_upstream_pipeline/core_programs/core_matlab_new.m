@@ -1,10 +1,5 @@
-% This function takes parameters from config.yaml, passed by the rsf.py script as arguments 
-% Depending on the parameters, the logic will route to one of 5 chunks:
-    % 1 global_registration: performs global reg over a whole tile
-    % 2 split: splits globally registered rounds into subtiles to parallelize following steps 
-    % 3 local_registration: performs local reg over one subtile and performs spot-finding and filtering
-    % 4 stitch: aggregates spot-finding results across subtiles and "re-stitches" the full tile
-    % 5 nuclei_protein_registration: 
+% 按 mode 执行 GR、LR、LS、找点/解码或蛋白配准。
+% TIFF 为可选输出；subtile MAT 仅在替代结果成功保存后按显式开关清理。
 
 function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_rounds, ...
                             user_dir, source_data_dir, registration_dir, log_dir, ...
@@ -121,12 +116,29 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
     addParameter(p, 'fsize', defaultfsize);
     addParameter(p, 'fsigma', defaultfsigma);
     addParameter(p, 'decoding_rounds', defaultdecoding_rounds);
+    is_switch = @(x) islogical(x) && isscalar(x);
+    addParameter(p, 'preTIFF_out', false, is_switch);
+    addParameter(p, 'alignTIFF_out', false, is_switch);
+    addParameter(p, 'mergedTIFFout', false, is_switch);
+    addParameter(p, 'tif_rounds', []);
+    addParameter(p, 'cleanup_gr_subtile_mat', false, is_switch);
+    addParameter(p, 'cleanup_lr_subtile_mat', false, is_switch);
 
     disp("additional parameters added");
  
     parse(p, sample, mode, tile, xy, z, ref_round, n_chs, n_rounds, ...
             user_dir, source_data_dir, registration_dir, log_dir, ...
             varargin{:}); 
+
+    tif_rounds = p.Results.tif_rounds;
+    if ~isempty(tif_rounds)
+        validateattributes(tif_rounds, {'numeric'}, {'vector','integer','positive','finite','<=',p.Results.n_rounds});
+        assert(numel(unique(tif_rounds)) == numel(tif_rounds), 'tif_rounds must be unique.');
+    end
+    fprintf('TIFF: pre=%d align=%d merged=%d rounds=%s ([]=all)\n', ...
+        p.Results.preTIFF_out, p.Results.alignTIFF_out, p.Results.mergedTIFFout, mat2str(tif_rounds));
+    fprintf('MAT cleanup: GR-subtile=%d LR-subtile=%d\n', ...
+        p.Results.cleanup_gr_subtile_mat, p.Results.cleanup_lr_subtile_mat);
 
     % Parse dimensions
     input_dim = [p.Results.xy p.Results.xy p.Results.z p.Results.n_chs p.Results.n_rounds];
@@ -202,6 +214,8 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
 
         sdata = new_STARMapDataset_zf(input_path, output_path, 'useGPU', false);
         sdata.log = fopen(fullfile(curr_out_path_log, 'log_global.txt'), 'w');
+        assert(sdata.log >= 0, 'Cannot open GR log.');
+        log_cleanup = onCleanup(@() fclose(sdata.log));
 
         %%% preprocess
         if p.Results.loadFormat == 'tif'
@@ -215,46 +229,14 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
             % load rawImages from mat file            
             fprintf('Loading raw image from mat ...\n');
             load(fullfile(curr_out_path, strcat('rawImages_complete.mat')));
-            sdata_t.rawImages = rawImages;
+            sdata.rawImages = rawImages;
             rawImages = [];
             fprintf('preprocessed rawImages have been loaded from matfile.\n')
         end
 
-        % %% Save raw input images for each round
-        % for r = 1:size(sdata.rawImages, 5) % 遍历每个 round
-        %     % if ismember(r, [1, 5, 7, 9])  % 只保存特定轮次
-
-        %     for c = 1:size(sdata.rawImages, 4) % 遍历每个 channel
-        %         rawImage_img_name = fullfile(interm_output_dir, ...
-        %             strcat(p.Results.tile, "_rawImage_round_", num2str(r), "_channel_", num2str(c), ".tif"));
-        
-        %         if exist(rawImage_img_name, 'file') == 2
-        %             delete(rawImage_img_name);
-        %         end
-        
-        %         for j = 1:size(sdata.rawImages, 3) % 遍历每个 z-slice
-        %             img_slice = squeeze(sdata.rawImages(:, :, j, c, r)); % 获取单个 z-slice
-        %             if j == 1
-        %                 imwrite(img_slice, rawImage_img_name, 'WriteMode', 'overwrite');
-        %             else
-        %                 imwrite(img_slice, rawImage_img_name, 'WriteMode', 'append');
-        %             end
-        %         end
-        
-        %         disp(strcat("Wrote ", rawImage_img_name, " to file"));
-        %     end
-        %     % end
-        % end
-
-        % % Save rawImages as a complete mat file
-        % rawImages_mat_file = fullfile(curr_out_path, strcat('rawComplete_image.mat'));
-        % rawImages = sdata.rawImages;
-        % % save(rawImages_mat_file, 'rawImages');
-        % save(rawImages_mat_file, 'rawImages', '-v7.3');
-        % disp(strcat("raw images saved as mat file: ", rawImages_mat_file));
-
-
-        % sdata = sdata.SwapChannels; % !!
+        SaveSingleTiff(sdata.rawImages, interm_output_dir, ...
+            strcat(p.Results.tile, '_rawImage_round_%d_channel_%d.tif'), ...
+            'out_switch', p.Results.preTIFF_out, 'tif_rounds', tif_rounds);
 
         if strcmp(p.Results.norm_mode, 'percentile')
             sdata = sdata.PercenNormalize('output_format', p.Results.norm_out_format, 'maxper', p.Results.percen_max);
@@ -266,31 +248,9 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
 
         disp(strcat("current datatype of images matrix in mat:", class(sdata.rawImages)));
 
-        % Save raw input images for each round
-        % for r = 1:size(sdata.rawImages, 5) % 遍历每个 round
-        %     % if ismember(r, [1, 5, 7, 9])  % 只保存特定轮次
-
-        %     for c = 1:size(sdata.rawImages, 4) % 遍历每个 channel
-        %         rawNorm_img_name = fullfile(interm_output_dir, ...
-        %             strcat(p.Results.tile, "_rawNorm_round_", num2str(r), "_channel_", num2str(c), ".tif"));
-        
-        %         if exist(rawNorm_img_name, 'file') == 2
-        %             delete(rawNorm_img_name);
-        %         end
-        
-        %         for j = 1:size(sdata.rawImages, 3) % 遍历每个 z-slice
-        %             img_slice = squeeze(sdata.rawImages(:, :, j, c, r)); % 获取单个 z-slice
-        %             if j == 1
-        %                 imwrite(img_slice, rawNorm_img_name, 'WriteMode', 'overwrite');
-        %             else
-        %                 imwrite(img_slice, rawNorm_img_name, 'WriteMode', 'append');
-        %             end
-        %         end
-        
-        %         disp(strcat("Wrote ", rawNorm_img_name, " to file"));
-        %     end
-        %     % end
-        % end
+        SaveSingleTiff(sdata.rawImages, interm_output_dir, ...
+            strcat(p.Results.tile, '_rawNorm_round_%d_channel_%d.tif'), ...
+            'out_switch', p.Results.preTIFF_out, 'tif_rounds', tif_rounds);
 
         if p.Results.hist_round > 0
             sdata = sdata.HistEqualize('Method', "inter_round", 'hist_round', p.Results.hist_round);
@@ -305,31 +265,9 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
         end
 
 
-        % %% Save raw input images for each round
-        % for r = 1:size(sdata.rawImages, 5) % 遍历每个 round
-        %     % if ismember(r, [1, 5, 7, 9])  % 只保存特定轮次
-
-        %     for c = 1:size(sdata.rawImages, 4) % 遍历每个 channel
-        %         rawHistEq_img_name = fullfile(interm_output_dir, ...
-        %             strcat(p.Results.tile, "_rawHistEq_round_", num2str(r), "_channel_", num2str(c), ".tif"));
-        
-        %         if exist(rawHistEq_img_name, 'file') == 2
-        %             delete(rawHistEq_img_name);
-        %         end
-        
-        %         for j = 1:size(sdata.rawImages, 3) % 遍历每个 z-slice
-        %             img_slice = squeeze(sdata.rawImages(:, :, j, c, r)); % 获取单个 z-slice
-        %             if j == 1
-        %                 imwrite(img_slice, rawHistEq_img_name, 'WriteMode', 'overwrite');
-        %             else
-        %                 imwrite(img_slice, rawHistEq_img_name, 'WriteMode', 'append');
-        %             end
-        %         end
-        
-        %         disp(strcat("Wrote ", rawHistEq_img_name, " to file"));
-        %     end
-        %     % end
-        % end
+        SaveSingleTiff(sdata.rawImages, interm_output_dir, ...
+            strcat(p.Results.tile, '_rawHistEq_round_%d_channel_%d.tif'), ...
+            'out_switch', p.Results.preTIFF_out, 'tif_rounds', tif_rounds);
         
 
 
@@ -341,38 +279,9 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
             disp('No morphological reconstruction performed.')
         end
 
-        % % Save rawImages as a complete mat file
-        % rawImages_mat_file = fullfile(curr_out_path, strcat('rawPreprocessed_image.mat'));
-        % full_image = sdata.rawImages;
-        % % save(rawImages_mat_file, 'rawImages');
-        % save(rawImages_mat_file, 'full_image', '-v7.3');
-        % disp(strcat("raw images saved as mat file: ", rawImages_mat_file));
-        
-        % %% Save raw input images for each round
-        % for r = 1:size(sdata.rawImages, 5) % 遍历每个 round
-        %     % if ismember(r, [1, 5, 7, 9])  % 只保存特定轮次
-
-        %     for c = 1:size(sdata.rawImages, 4) % 遍历每个 channel
-        %         rawMorphoRecon_img_name = fullfile(interm_output_dir, ...
-        %             strcat(p.Results.tile, "_rawMorphoRecon_round_", num2str(r), "_channel_", num2str(c), ".tif"));
-        
-        %         if exist(rawMorphoRecon_img_name, 'file') == 2
-        %             delete(rawMorphoRecon_img_name);
-        %         end
-        
-        %         for j = 1:size(sdata.rawImages, 3) % 遍历每个 z-slice
-        %             img_slice = squeeze(sdata.rawImages(:, :, j, c, r)); % 获取单个 z-slice
-        %             if j == 1
-        %                 imwrite(img_slice, rawMorphoRecon_img_name, 'WriteMode', 'overwrite');
-        %             else
-        %                 imwrite(img_slice, rawMorphoRecon_img_name, 'WriteMode', 'append');
-        %             end
-        %         end
-        
-        %         disp(strcat("Wrote ", rawMorphoRecon_img_name, " to file"));
-        %     end
-        %     % end
-        % end
+        SaveSingleTiff(sdata.rawImages, interm_output_dir, ...
+            strcat(p.Results.tile, '_rawMorphoRecon_round_%d_channel_%d.tif'), ...
+            'out_switch', p.Results.preTIFF_out, 'tif_rounds', tif_rounds);
 
 
         if p.Results.global_registration_mode == 1
@@ -382,32 +291,12 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
                                                   'ref_round', p.Results.ref_round, ...
                                                   'alignBasis', p.Results.align_basis);
 
-            % % Save global registered images for each round
-            % for r = 1:size(sdata.registeredImages, 5) % 遍历每个 round
-            %     % if ismember(r, [1, 3, 5, 7, 9])  % 只保存特定轮次
-
-            %     for c = 1:size(sdata.registeredImages, 4) % 遍历每个 channel
-            %         global_registered_img_name = fullfile(interm_output_dir, ...
-            %             strcat(p.Results.tile, "_global_registered_round_", num2str(r), "_channel_", num2str(c), ".tif"));
-                
-            %         if exist(global_registered_img_name, 'file') == 2
-            %             delete(global_registered_img_name);
-            %         end
-                
-            %         for j = 1:size(sdata.registeredImages, 3) % 遍历每个 z-slice
-            %             img_slice = squeeze(sdata.registeredImages(:, :, j, c, r)); % 获取单个 z-slice
-            %             if j == 1
-            %                 imwrite(img_slice, global_registered_img_name, 'WriteMode', 'overwrite');
-            %             else
-            %                 imwrite(img_slice, global_registered_img_name, 'WriteMode', 'append');
-            %             end
-            %         end
-                
-            %         disp(strcat("Wrote ", global_registered_img_name, " to file"));
-            %     end
-
-            %     % end
-            % end
+            SaveSingleTiff(sdata.registeredImages, interm_output_dir, ...
+                strcat(p.Results.tile, '_global_registered_round_%d_channel_%d.tif'), ...
+                'out_switch', p.Results.alignTIFF_out, 'tif_rounds', tif_rounds);
+            saveMergedTiff(sdata.registeredImages, interm_output_dir, ...
+                strcat(p.Results.tile, '_global_registered_round%dchannel-merged.tif'), ...
+                'out_switch', p.Results.mergedTIFFout, 'tif_rounds', tif_rounds, 'channels', 1:spot_channels);
 
             % Save registeredImages as a complete mat file
             registeredImages_mat_file = fullfile(curr_out_path, strcat('globalRegistered_image.mat'));
@@ -416,48 +305,7 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
             disp(strcat("Registered images saved as mat file: ", registeredImages_mat_file));
 
 
-            % %%% save round 1 merged tif and registered whole image
-            % try % round 1 merged
-            %     r1_img = max(sdata.registeredImages(:,:,:,:,p.Results.ref_round), [], 4);
-            %     r1_img_name = fullfile(interm_output_dir, "r1merged.tif");
-            %     SaveSingleTiff(r1_img, r1_img_name);
-            %     clear r1_img;
-            %     disp(strcat("Wrote ", r1_img_name, " to file"))
-            % catch
-            %     disp('Did not write round1 merged tif. Probably already exists, but double-check');
-            % end
-
-            % % save every round channel-merged registered image
-            % % Save global registered images for each round
-            % for r = 1:size(sdata.registeredImages, 5) % 遍历每个 round
-            %     % if ismember(r, [1, 3, 5, 7, 9])  % 只保存特定轮次
-
-
-            %     global_registered_img_name = fullfile(interm_output_dir, ...
-            %         strcat(p.Results.tile, "_global_registered_round", num2str(r), "channel-merged",".tif"));
-            
-            %     if exist(global_registered_img_name, 'file') == 2
-            %         delete(global_registered_img_name);
-            %     end
-            
-            %     for j = 1:size(sdata.registeredImages, 3) % 遍历每个 z-slice
-            %         img_slice = squeeze(sdata.registeredImages(:, :, j, 1:spot_channels, r)); % 获取斑点通道的单个 z-slice
-            %         img_slice = squeeze(max(img_slice, [], 3)); % 合并 channel
-
-            %         if j == 1
-            %             imwrite(img_slice, global_registered_img_name, 'WriteMode', 'overwrite');
-            %         else
-            %             imwrite(img_slice, global_registered_img_name, 'WriteMode', 'append');
-            %         end
-            %     end
-            
-            %     disp(strcat("Wrote ", global_registered_img_name, " to file"));
-
-
-            %     % end
-            % end
-
-            fclose(sdata.log);
+            clear log_cleanup;
             
 
             % Split into subtiles for local registration and spot-finding
@@ -539,25 +387,26 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
 
         %%% get subtile coordinate position data
         coords_mat =readtable(fullfile(interm_output_dir,strcat('coords_mat_',num2str(p.Results.sqrt_pieces^2),'.csv')),'ReadVariableNames',true,'TextType','string');
-        goodSpots = table([],[],[],[],'VariableNames',{'x','y','z','Gene'});
         
         t = p.Results.subtile;
         input_dim_t = input_dim;
-        tile_idx = table2array(coords_mat(t,2:3));
-        start_coords_x = table2array(coords_mat(t,4));
-        start_coords_y = table2array(coords_mat(t,5));
-        upper_left = table2array(coords_mat(t,8:9));
         input_dim_t(1:2) = table2array(coords_mat(t,10:11));
     
         %%% initialize and load registered subtile 
         sdata_t = new_STARMapDataset_zf(input_path, output_path, 'useGPU', false);
         sdata_t.log = fopen(fullfile(curr_out_path_log, strcat('log_t',num2str(p.Results.subtile),'_',num2str(p.Results.sqrt_pieces^2),'.txt')), 'w');
+        assert(sdata_t.log >= 0, 'Cannot open LR log.');
+        log_cleanup = onCleanup(@() fclose(sdata_t.log));
         fprintf(sdata_t.log, strcat('log_t',num2str(p.Results.subtile),'_',num2str(p.Results.sqrt_pieces^2),':\n'));
         
         % load t_output, name is defined in global registration
-        load(fullfile(interm_output_dir, strcat('registeredImages_','t',num2str(p.Results.subtile),'_',num2str(p.Results.sqrt_pieces^2),'.mat')));
-        sdata_t.registeredImages = t_output;
-        t_output = [];
+        gr_subtile_path = fullfile(interm_output_dir, sprintf('registeredImages_t%d_%d.mat', t, p.Results.sqrt_pieces^2));
+        if p.Results.cleanup_gr_subtile_mat
+            validate_consumed_path(gr_subtile_path, interm_output_dir);
+        end
+        loaded = load(gr_subtile_path, 't_output');
+        sdata_t.registeredImages = loaded.t_output;
+        clear loaded;
 
         sdata_t.dims = input_dim_t;
         sdata_t.dimX = input_dim_t(1);
@@ -574,10 +423,15 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
         % Save local registered images
         local_registered_img_name = fullfile(interm_output_dir, strcat('local_registeredImages_t', num2str(p.Results.subtile), '_', num2str(p.Results.sqrt_pieces^2), '.mat'));
         local_reg_out = sdata_t.registeredImages;
-        save(local_registered_img_name, 'local_reg_out');
+        if p.Results.cleanup_gr_subtile_mat
+            publish_mat(local_registered_img_name, 'local_reg_out', local_reg_out, false);
+            delete_consumed_mat({gr_subtile_path}, interm_output_dir);
+        else
+            save(local_registered_img_name, 'local_reg_out');
+        end
         disp(strcat("Wrote ", local_registered_img_name, " to file"))
 
-        fclose(sdata_t.log);
+        clear log_cleanup;
     end
 
     % 2025-08-13: Stitching subtiles of local registered images
@@ -591,6 +445,10 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
         full_tile_dim = [p.Results.xy, p.Results.xy, p.Results.z, p.Results.n_chs, p.Results.n_rounds];
         disp(full_tile_dim);
         full_image = zeros(full_tile_dim, p.Results.norm_out_format);
+        consumed_paths = cell(total_subtiles, 1);
+        if p.Results.cleanup_lr_subtile_mat
+            fprintf('CLEANUP: LR subtiles will be removed after LS outputs; local spot finding/decoding must not need them.\n');
+        end
         
 
         %%% iteratively aggregate subtile images
@@ -598,10 +456,13 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
             fprintf('>>> stitching subtile %d / %d...\n', t, total_subtiles);
 
             % load subtile
-            load(fullfile(interm_output_dir, strcat('local_registeredImages_t', num2str(t), '_', num2str(p.Results.sqrt_pieces^2), '.mat')));
-            
-            subtile_image = local_reg_out;
-            local_reg_out = [];
+            consumed_paths{t} = fullfile(interm_output_dir, sprintf('local_registeredImages_t%d_%d.mat', t, p.Results.sqrt_pieces^2));
+            if p.Results.cleanup_lr_subtile_mat
+                validate_consumed_path(consumed_paths{t}, interm_output_dir);
+            end
+            loaded = load(consumed_paths{t}, 'local_reg_out');
+            subtile_image = loaded.local_reg_out;
+            clear loaded;
 
             tile_info = coords_mat(t,:);
             dest_y_start = tile_info.upperleft_y + 1;       % mosaic start-coor of subtile in full tile
@@ -619,70 +480,28 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
             % stitch subtile into full tile
             full_image(dest_y_start:dest_y_end, dest_x_start:dest_x_end, :, :, :) = ...
                 subtile_image(src_y_start:src_y_end, src_x_start:src_x_end, :, :, :);
+            clear subtile_image;
         end
 
 
         % save stitched image
         stitched_image_path = fullfile(curr_out_path, 'localRegistered_image.mat');
-        save(stitched_image_path, 'full_image', '-v7.3');
+        if p.Results.cleanup_lr_subtile_mat
+            publish_mat(stitched_image_path, 'full_image', full_image, true);
+        else
+            save(stitched_image_path, 'full_image', '-v7.3');
+        end
         disp(strcat("Locally Registered images saved as mat file: ", stitched_image_path));
 
 
-        % Save local registered images for each round
-        for r = 1:size(full_image, 5) % 遍历每个 round
-            % if ismember(r, [1, 3, 5, 7, 9])  % 只保存特定轮次
-
-            for c = 1:size(full_image, 4) % 遍历每个 channel
-                local_registered_img_name = fullfile(interm_output_dir, ...
-                    strcat(p.Results.tile, "_local_registered_round_", num2str(r), "_channel_", num2str(c), ".tif"));
-            
-                if exist(local_registered_img_name, 'file') == 2
-                    delete(local_registered_img_name);
-                end
-            
-                for j = 1:size(full_image, 3) % 遍历每个 z-slice
-                    img_slice = squeeze(full_image(:, :, j, c, r)); % 获取单个 z-slice
-                    if j == 1
-                        imwrite(img_slice, local_registered_img_name, 'WriteMode', 'overwrite');
-                    else
-                        imwrite(img_slice, local_registered_img_name, 'WriteMode', 'append');
-                    end
-                end
-            
-                disp(strcat("Wrote ", local_registered_img_name, " to file"));
-            end
-
-            % end
-        end
-
-        for r = 1:size(full_image, 5) % 遍历每个 round
-            % if ismember(r, [1, 3, 5, 7, 9])  % 只保存特定轮次
-
-
-            local_registered_img_name = fullfile(interm_output_dir, ...
-                strcat(p.Results.tile, "_local_registered_round", num2str(r), "channel-merged",".tif"));
-        
-            if exist(local_registered_img_name, 'file') == 2
-                delete(local_registered_img_name);
-            end
-        
-            for j = 1:size(full_image, 3) % 遍历每个 z-slice
-                % img_slice = squeeze(full_image(:, :, j, :, r)); % 获取单个 z-slice
-                img_slice = squeeze(full_image(:, :, j, 1:spot_channels, r)); % 获取斑点通道的单个 z-slice
-                % disp(size(img_slice));
-                img_slice = squeeze(max(img_slice, [], 3)); % 合并 channel
-
-                if j == 1
-                    imwrite(img_slice, local_registered_img_name, 'WriteMode', 'overwrite');
-                else
-                    imwrite(img_slice, local_registered_img_name, 'WriteMode', 'append');
-                end
-            end
-        
-            disp(strcat("Wrote ", local_registered_img_name, " to file"));
-
-
-            % end
+        SaveSingleTiff(full_image, interm_output_dir, ...
+            strcat(p.Results.tile, '_local_registered_round_%d_channel_%d.tif'), ...
+            'out_switch', p.Results.alignTIFF_out, 'tif_rounds', tif_rounds);
+        saveMergedTiff(full_image, interm_output_dir, ...
+            strcat(p.Results.tile, '_local_registered_round%dchannel-merged.tif'), ...
+            'out_switch', p.Results.mergedTIFFout, 'tif_rounds', tif_rounds, 'channels', 1:spot_channels);
+        if p.Results.cleanup_lr_subtile_mat
+            delete_consumed_mat(consumed_paths, interm_output_dir);
         end
 
         fprintf('Image stitch finished: %s\n', stitched_image_path);
@@ -706,7 +525,7 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
         if strcmp(p.Results.loading_mode, 'local_registration')
             load(fullfile(curr_out_path, 'localRegistered_image.mat'));
         elseif strcmp(p.Results.loading_mode, 'global_registration')
-            ;
+            load(fullfile(curr_out_path, 'globalRegistered_image.mat'));
         elseif strcmp(p.Results.loading_mode, 'raw_preprocessed')
             load(fullfile(curr_out_path, strcat('rawPreprocessed_image.mat')));
         end
@@ -740,9 +559,16 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
                 fprintf('Detected existing results for max3d, loading: %s\n', target_file);
                 allSpots_t = readtable(target_file, 'ReadVariableNames', true);
                 
-                % 将 table 转回 array 并赋给 sdata_t.allSpots
-                % 注意：这里需要确保 table 列的顺序与内部 allSpots 格式一致
-                sdata_t.allSpots = table2array(allSpots_t);
+                % 独立找点 CSV 省略兼容列；内部仍保持 channel 位于第 6 列。
+                spot_columns = {'x','y','z','intensity','channel'};
+                if ~all(ismember(spot_columns, allSpots_t.Properties.VariableNames))
+                    error('max3d cache requires x, y, z, intensity and channel columns: %s', target_file);
+                end
+                if ~ismember('addition', allSpots_t.Properties.VariableNames)
+                    allSpots_t.addition = repmat(p.Results.intensity_threshold * 255, height(allSpots_t), 1);
+                end
+                sdata_t.allSpots = table2array(allSpots_t(:, ...
+                    {'x','y','z','intensity','addition','channel'}));
 
                 % 排除行名计算有多少行，以反映 斑点检测的结果
                 fprintf('Loaded allSpots with %d detected spots.\n', size(sdata_t.allSpots, 1));
@@ -769,14 +595,14 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
             % 2025-08-25: Global Spot Finding by in-house methods and Decoding
             sdata_t = sdata_t.SpotFinding('Method', p.Results.spotfinding_method, ...
                 'intensityThreshold', p.Results.intensity_threshold, 'ref_index', p.Results.ref_round, ...
-                'fsize', p.Results.fsize, 'fsigma', p.Results.sigma, 'showPlots', false);
+                'fsize', p.Results.fsize, 'fsigma', p.Results.fsigma, 'showPlots', false);
             % adjust coordinates for subtile offset and save cooordinates informations
             if size(sdata_t.allSpots,1) > 0
                 allSpots_t = [table(sdata_t.allSpots(:,1), sdata_t.allSpots(:,2), sdata_t.allSpots(:,3), ...
                                     sdata_t.allSpots(:,4), sdata_t.allSpots(:,5), sdata_t.allSpots(:,6), ...
                                     'VariableNames',{'x','y','z','intensity', 'addition', 'channel'})]
             else
-                allSpots_t = table([],'VariableNames',{'x','y','z','intensity', 'addition', 'channel'});
+                allSpots_t = table([],[],[],[],[],[],'VariableNames',{'x','y','z','intensity', 'addition', 'channel'});
             end
             writetable(allSpots_t, fullfile(curr_out_path, strcat('allSpots_', p.Results.spotfinding_method, '_', num2str(p.Results.intensity_threshold), '.csv')),'Delimiter',',','QuoteStrings',false);
             fprintf('allSpots saved.\n');
@@ -830,7 +656,7 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
             if strcmp(p.Results.spotfinding_method, 'SpotFlow')
                 prob_table = table(sdata_t.goodSpots(:,5),'VariableNames',{'probability'});
                 goodSpots = [xyz_table, gene_table, prob_table];
-            elseif strcmp(p.Results.spotfinding_method, 'max3d')
+            elseif ismember(p.Results.spotfinding_method, {'max3d', 'log3d'})
                 goodSpots = [xyz_table, gene_table];
             end
 
@@ -858,7 +684,10 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
             end
 
         else
-            allSpots_raw = table([], [], [], 'VariableNames', {'x', 'y', 'z', 'intensity'});
+            allSpots_raw = table([], [], [], [], [], 'VariableNames', {'x', 'y', 'z', 'intensity', 'channel'});
+            if strcmp(p.Results.spotfinding_method, 'SpotFlow')
+                allSpots_raw.probability = zeros(0, 1);
+            end
         end
 
         % --- Part 1.2: 处理质量分数数据 (Scores) ---
@@ -1404,3 +1233,52 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
     if strcmp(p.Results.mode,'plot_back')
         pass
     end
+end
+
+function publish_mat(output_path, variable_name, image, use_v73)
+% 临时文件检查通过后才发布；失败保留临时证据及所有输入。
+temporary_path = [tempname(fileparts(output_path)), '.mat'];
+fprintf('MAT SAVE: %s -> %s\n', temporary_path, output_path);
+payload = struct;
+payload.(variable_name) = image;
+if use_v73
+    save(temporary_path, '-struct', 'payload', '-v7.3');
+else
+    save(temporary_path, '-struct', 'payload');
+end
+info = whos('-file', temporary_path, variable_name);
+assert(numel(info) == 1 && isequal(info.size, size(image)) && strcmp(info.class, class(image)), ...
+    'MAT output validation failed: %s', temporary_path);
+assert(~isfolder(output_path), 'MAT destination is a directory: %s', output_path);
+[ok, message] = movefile(temporary_path, output_path, 'f');
+assert(ok, 'MAT publish failed: %s', message);
+fprintf('MAT READY: %s\n', output_path);
+end
+
+function validate_consumed_path(filename, interm_output_dir)
+% 精确路径限制，不代替并发互斥；输入和 interm 本身均不得为符号链接。
+file = java.io.File(filename);
+root = java.io.File(interm_output_dir);
+assert(~java.nio.file.Files.isSymbolicLink(file.toPath()) && ...
+    ~java.nio.file.Files.isSymbolicLink(root.toPath()), 'Cleanup refuses symbolic links: %s', filename);
+assert(isfile(filename) && strcmp(char(file.getCanonicalFile().getParent()), char(root.getCanonicalPath())), ...
+    'Cleanup input must be a regular file directly inside interm: %s', filename);
+end
+
+function delete_consumed_mat(filenames, interm_output_dir)
+deleted = 0;
+try
+    for k = 1:numel(filenames)
+        validate_consumed_path(filenames{k}, interm_output_dir);
+        fprintf('MAT DELETE: %s\n', filenames{k});
+        delete(filenames{k});
+        assert(~isfile(filenames{k}), 'MAT deletion failed: %s', filenames{k});
+        deleted = deleted + 1;
+    end
+catch failure
+    fprintf(2, 'MAT CLEANUP FAILED: deleted=%d total=%d\n', deleted, numel(filenames));
+    fprintf(2, 'MAT REMAINING: %s\n', filenames{deleted+1:end});
+    rethrow(failure);
+end
+fprintf('MAT CLEANUP SUCCESS: deleted=%d\n', deleted);
+end

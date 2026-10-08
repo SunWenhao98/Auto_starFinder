@@ -11,6 +11,9 @@ set -euo pipefail
 
 print_usage() {
     echo "Usage: $0 --project_root PATH --project_name NAME --reg_dir_suffix SUFFIX [options]"
+    echo "TIFF: --alignTIFF_out false --mergedTIFFout false --tif_rounds '1,2,3,4'（默认空表示全部）"
+    echo "清理: --cleanup_lr_subtile_mat false；开关仅接受 true/false。"
+    echo "清理开启后不可再依赖 LR subtile 运行局部找点/解码；部分清理失败不能直接重跑 LS。"
 }
 
 print_slurm_info() {
@@ -37,6 +40,10 @@ REF_ROUND="1"
 CHANNEL_NUM="3"
 ROUND_NUM="6"
 OFFSET="0"
+ALIGN_TIFF_OUT="false"
+MERGED_TIFF_OUT="false"
+TIF_ROUNDS=""
+CLEANUP_LR_SUBTILE_MAT="false"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -50,10 +57,26 @@ while [[ $# -gt 0 ]]; do
         --channel_num) CHANNEL_NUM="$2"; shift 2 ;;
         --round_num) ROUND_NUM="$2"; shift 2 ;;
         --offset) OFFSET="$2"; shift 2 ;;
+        --alignTIFF_out) ALIGN_TIFF_OUT="$2"; shift 2 ;;
+        --mergedTIFFout) MERGED_TIFF_OUT="$2"; shift 2 ;;
+        --tif_rounds) TIF_ROUNDS="$2"; shift 2 ;;
+        --cleanup_lr_subtile_mat) CLEANUP_LR_SUBTILE_MAT="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) print_usage >&2; exit 2 ;;
     esac
 done
+
+for switch_value in "$ALIGN_TIFF_OUT" "$MERGED_TIFF_OUT" "$CLEANUP_LR_SUBTILE_MAT"; do
+    if [[ "$switch_value" != "true" && "$switch_value" != "false" ]]; then
+        echo "输出和清理开关只接受 true/false。" >&2
+        exit 2
+    fi
+done
+if [[ -n "$TIF_ROUNDS" && ! "$TIF_ROUNDS" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
+    echo "--tif_rounds 需要逗号分隔的正整数，或空字符串。" >&2
+    exit 2
+fi
+TIF_ROUNDS_MATLAB="[${TIF_ROUNDS//,/ }]"
 
 if [[ -z "${CORE_MATLAB_DIR}" || ! -d "${CORE_MATLAB_DIR}" ]]; then
     echo "--core_matlab_dir must be an existing directory." >&2
@@ -110,8 +133,10 @@ echo "CHANNEL_NUM=${CHANNEL_NUM}"
 echo "ROUND_NUM=${ROUND_NUM}"
 echo "OFFSET=${OFFSET}"
 echo "CORE_MATLAB_DIR=${CORE_MATLAB_DIR}"
+echo "alignTIFF_out=$ALIGN_TIFF_OUT mergedTIFFout=$MERGED_TIFF_OUT tif_rounds=$TIF_ROUNDS_MATLAB"
+echo "cleanup_lr_subtile_mat=$CLEANUP_LR_SUBTILE_MAT"
 
 module purge
 module load matlab/2023a
 
-matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'local_image_stitch', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'sqrt_pieces', 4)"
+matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'local_image_stitch', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'sqrt_pieces', 4, 'alignTIFF_out', $ALIGN_TIFF_OUT, 'mergedTIFFout', $MERGED_TIFF_OUT, 'tif_rounds', $TIF_ROUNDS_MATLAB, 'cleanup_lr_subtile_mat', $CLEANUP_LR_SUBTILE_MAT);"

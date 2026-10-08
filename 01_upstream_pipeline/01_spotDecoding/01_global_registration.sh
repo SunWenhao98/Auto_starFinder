@@ -11,6 +11,8 @@ set -euo pipefail
 
 print_usage() {
     echo "Usage: $0 --project_root PATH --project_name NAME --reg_dir_suffix SUFFIX [options]"
+    echo "TIFF: --preTIFF_out false --alignTIFF_out false --mergedTIFFout false --tif_rounds '1,2,3,4'"
+    echo "开关仅接受 true/false；tif_rounds 默认空字符串，表示全部轮次。"
 }
 
 print_slurm_info() {
@@ -48,6 +50,10 @@ ERODE="1"
 TRANSFORM="1"
 INPUT_FORMAT="uint16"
 NORM_OUT_FORMAT="uint8"
+PRE_TIFF_OUT="false"
+ALIGN_TIFF_OUT="false"
+MERGED_TIFF_OUT="false"
+TIF_ROUNDS=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -72,10 +78,26 @@ while [[ $# -gt 0 ]]; do
         --transform) TRANSFORM="$2"; shift 2 ;;
         --input_format) INPUT_FORMAT="$2"; shift 2 ;;
         --norm_out_format) NORM_OUT_FORMAT="$2"; shift 2 ;;
+        --preTIFF_out) PRE_TIFF_OUT="$2"; shift 2 ;;
+        --alignTIFF_out) ALIGN_TIFF_OUT="$2"; shift 2 ;;
+        --mergedTIFFout) MERGED_TIFF_OUT="$2"; shift 2 ;;
+        --tif_rounds) TIF_ROUNDS="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) print_usage >&2; exit 2 ;;
     esac
 done
+
+for switch_value in "$PRE_TIFF_OUT" "$ALIGN_TIFF_OUT" "$MERGED_TIFF_OUT"; do
+    if [[ "$switch_value" != "true" && "$switch_value" != "false" ]]; then
+        echo "TIFF 开关只接受 true/false。" >&2
+        exit 2
+    fi
+done
+if [[ -n "$TIF_ROUNDS" && ! "$TIF_ROUNDS" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
+    echo "--tif_rounds 需要逗号分隔的正整数，或空字符串。" >&2
+    exit 2
+fi
+TIF_ROUNDS_MATLAB="[${TIF_ROUNDS//,/ }]"
 
 if [[ -z "${CORE_MATLAB_DIR}" || ! -d "${CORE_MATLAB_DIR}" ]]; then
     echo "--core_matlab_dir must be an existing directory." >&2
@@ -144,8 +166,9 @@ echo "TRANSFORM=${TRANSFORM}"
 echo "INPUT_FORMAT=${INPUT_FORMAT}"
 echo "NORM_OUT_FORMAT=${NORM_OUT_FORMAT}"
 echo "CORE_MATLAB_DIR=${CORE_MATLAB_DIR}"
+echo "preTIFF_out=$PRE_TIFF_OUT alignTIFF_out=$ALIGN_TIFF_OUT mergedTIFFout=$MERGED_TIFF_OUT tif_rounds=$TIF_ROUNDS_MATLAB"
 
 module purge
 module load matlab/2023a
 
-matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'global_registration', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'sqrt_pieces', 4, 'norm_mode', '$NORM_MODE', 'percen_max', $PERCEN_MAX, 'input_format', '$INPUT_FORMAT', 'norm_out_format', '$NORM_OUT_FORMAT', 'hist_channel', $HIST_CHANNEL, 'hist_round', $HIST_ROUND, 'radius', $RADIUS, 'global_registration_mode', $MODE, 'align_basis', '$ALIGN_BASIS', 'erode', $ERODE, 'transform', $TRANSFORM);"
+matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'global_registration', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'sqrt_pieces', 4, 'norm_mode', '$NORM_MODE', 'percen_max', $PERCEN_MAX, 'input_format', '$INPUT_FORMAT', 'norm_out_format', '$NORM_OUT_FORMAT', 'hist_channel', $HIST_CHANNEL, 'hist_round', $HIST_ROUND, 'radius', $RADIUS, 'global_registration_mode', $MODE, 'align_basis', '$ALIGN_BASIS', 'erode', $ERODE, 'transform', $TRANSFORM, 'preTIFF_out', $PRE_TIFF_OUT, 'alignTIFF_out', $ALIGN_TIFF_OUT, 'mergedTIFFout', $MERGED_TIFF_OUT, 'tif_rounds', $TIF_ROUNDS_MATLAB);"

@@ -101,21 +101,31 @@ STEP_SPECS = {
         ("gr_transform", "--transform"),
         ("gr_input_format", "--input_format"),
         ("gr_norm_out_format", "--norm_out_format"),
+        ("preTIFF_out", "--preTIFF_out"),
+        ("alignTIFF_out", "--alignTIFF_out"),
+        ("mergedTIFFout", "--mergedTIFFout"),
+        ("tif_rounds", "--tif_rounds"),
     )),
     "lr_subtile": StepSpec(
         "run_local_reg_subtile", "script_local_reg_subtile", "LR_subtile", "array",
         "lr_subtile", "logs002_local_registration", CORE_MATLAB_ARG + COMMON_ARGS + (
             ("lr_subtile_align_basis", "--align_basis"),
+            ("lr_subtile_cleanup_gr_subtile_mat", "--cleanup_gr_subtile_mat"),
         ) + IMAGE_ARGS + (("lr_subtile_offset", "--offset"),),
     ),
     "lr_fov": StepSpec(
         "run_local_reg_fov", "script_local_reg_fov", "LR_fov", "array",
         "lr_fov", "logs002_local_registration", CORE_MATLAB_ARG + COMMON_ARGS + (
             ("lr_fov_align_basis", "--align_basis"),
+            ("lr_fov_cleanup_gr_subtile_mat", "--cleanup_gr_subtile_mat"),
         ) + IMAGE_ARGS + (("lr_fov_offset", "--offset"),),
     ),
     "ls": StepSpec("run_stitch", "script_stitch", "LS", "array", "ls", "logs003_local_image_stitch", CORE_MATLAB_ARG + COMMON_ARGS + IMAGE_ARGS + (
         ("ls_offset", "--offset"),
+        ("alignTIFF_out", "--alignTIFF_out"),
+        ("mergedTIFFout", "--mergedTIFFout"),
+        ("tif_rounds", "--tif_rounds"),
+        ("ls_cleanup_lr_subtile_mat", "--cleanup_lr_subtile_mat"),
     )),
     "gspf": StepSpec("run_global_spf", "script_global_spf", "gSPF", "array", "gspf", "logs004_global_spot_finding", CORE_MATLAB_ARG + COMMON_ARGS + (
         ("gspf_intensity_threshold", "--intensity_threshold"),
@@ -458,6 +468,16 @@ def _parse_samples_registry(raw: str) -> tuple[SampleMetadata, ...]:
 
 def load_config(config_path: Path) -> LoadedConfig:
     parser = configparser.ConfigParser(
+        # 旧批次 INI 未配置新开关时，沿用 wrapper 的关闭默认值。
+        defaults={
+            "preTIFF_out": "false",
+            "alignTIFF_out": "false",
+            "mergedTIFFout": "false",
+            "tif_rounds": "",
+            "lr_subtile_cleanup_gr_subtile_mat": "false",
+            "lr_fov_cleanup_gr_subtile_mat": "false",
+            "ls_cleanup_lr_subtile_mat": "false",
+        },
         interpolation=configparser.BasicInterpolation(),
         inline_comment_prefixes=(";",),
     )
