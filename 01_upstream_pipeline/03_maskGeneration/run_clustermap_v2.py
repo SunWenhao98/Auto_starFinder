@@ -136,6 +136,12 @@ def get_args():
 if __name__ == '__main__':
 
     args = get_args()
+    print(f"PYTHON_EXECUTABLE={sys.executable}", flush=True)
+    print(f"PYTHON_VERSION={sys.version.split()[0]}", flush=True)
+    for module_name in ("ClusterMap.clustermap", "ClusterMap.preprocessing", "ClusterMap.utils", "ClusterMap.runtime"):
+        module = sys.modules.get(module_name)
+        if module is not None:
+            print(f"PACKAGE_ORIGIN {module_name}={module.__file__}", flush=True)
     
     # 1. Setup Parameters
     cell_num_threshold = float(args.cell_num_threshold)

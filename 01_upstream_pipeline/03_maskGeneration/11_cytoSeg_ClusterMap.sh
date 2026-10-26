@@ -12,6 +12,7 @@ set -euo pipefail
 
 print_usage() {
     echo "Usage: $0 --project_root PATH --project_name NAME --reg_dir_suffix SUFFIX [options]"
+    echo "  --conda_env NAME_OR_PATH  Conda environment [ClusterMapV2]"
 }
 
 print_slurm_info() {
@@ -33,6 +34,7 @@ PROJECT_NAME=""
 REG_DIR_SUFFIX=""
 SCRIPT_DIR=""
 CONDA_SH=""
+CONDA_ENV="ClusterMapV2"
 REF_ROUND="1"
 CELL_NUM_THRESHOLD="0.1"
 DAPI_GRID_INTERVAL="4"
@@ -56,6 +58,7 @@ while [[ $# -gt 0 ]]; do
         --reg_dir_suffix) REG_DIR_SUFFIX="$2"; shift 2 ;;
         --script_dir) SCRIPT_DIR="$2"; shift 2 ;;
         --conda_sh) CONDA_SH="$2"; shift 2 ;;
+        --conda_env) CONDA_ENV="$2"; shift 2 ;;
         --ref_round) REF_ROUND="$2"; shift 2 ;;
         --cell_num_threshold) CELL_NUM_THRESHOLD="$2"; shift 2 ;;
         --dapi_grid_interval) DAPI_GRID_INTERVAL="$2"; shift 2 ;;
@@ -147,12 +150,16 @@ echo "OUTPUT_LABEL=${OUTPUT_LABEL}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
 echo "RUNNER=${RUNNER}"
 echo "CONDA_SH=${CONDA_SH}"
+echo "CONDA_ENV=${CONDA_ENV}"
 echo "OFFSET=${OFFSET}"
 
 source "${CONDA_SH}"
 set +u
-conda activate ClusterMap
+conda activate "${CONDA_ENV}"
 set -u
+echo "CONDA_PREFIX=${CONDA_PREFIX:-N/A}"
+echo "PYTHON_EXECUTABLE=$(command -v python)"
+python --version
 
 mkdir -p "${OUTPUT_DIR}"
 sed -e 's/_rbRNA//g' -e 's/_ntRNA//g' "${TRANSCRIPTS_RAW}" > "${TRANSCRIPTS_CLEAN}"
