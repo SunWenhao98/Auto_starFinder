@@ -84,7 +84,7 @@ CONFIGS = {
 }
 
 
-POSITION_RE = re.compile(r"选中的 Position 文件夹名称:\s*(Position\d+)")
+POSITION_RE = re.compile(r"(?:选中的\s*Position\s*文件夹名称[:：]\s*|^POSITION_NAME=)(Position\d+)", re.MULTILINE)
 QC_RE = re.compile(r"([\d.]+) \[(\d+) / (\d+)\] percent of reads are below score thresh (?!.*of all valid spots).*")
 VALID_QC_RE = re.compile(r"([\d.]+) \[(\d+) / (\d+)\] percent of reads are below score thresh .* of all valid spots")
 INTENSITY_RE = re.compile(
@@ -338,7 +338,8 @@ def parse_dapi_cp(text: str, submit_directory: str) -> list[dict[str, str]]:
 
 
 def parse_gr_shift(text: str, submit_directory: str) -> list[dict[str, str]]:
-    fov = search(r"选中的\s*Position\s*文件夹名称[:：]\s*(Position\d+)", text, "")
+    position_match = POSITION_RE.search(text)
+    fov = position_match.group(1) if position_match else ""
     if not fov:
         return []
     pos_num = natural_number_from_position(fov)
@@ -391,6 +392,14 @@ def parse_batch(batch_root: Path, log_type: str) -> int:
     processed = 0
     for submit_dir in iter_submit_dirs(batch_root):
         log_dir = submit_dir / config.log_dir
+        if log_type == "decoding":
+            candidates = [submit_dir / name for name in
+                          (config.log_dir, "logs004_global_reads_decoding")]
+            existing = [path for path in candidates if path.is_dir()]
+            if len(existing) > 1:
+                raise ValueError(f"Ambiguous decoding log directories: {existing}")
+            if existing:
+                log_dir = existing[0]
         if not log_dir.is_dir():
             print(f"警告: {submit_dir.name} 缺少 {config.log_dir}，跳过。")
             continue
