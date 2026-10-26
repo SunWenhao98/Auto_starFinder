@@ -177,6 +177,7 @@ STEP_SPECS = {
     ), log_root_key="seg_log", script_dir_from_wrapper=True),
     "clumap": StepSpec("run_clustermap", "script_clustermap", "clustermap_seg", "array", "clumap", "logs011_clustermap", CONDA_SH_ARG + COMMON_ARGS + (
         ("ref_round", "--ref_round"),
+        ("clumap_conda_env", "--conda_env"),
         ("clumap_cell_num_threshold", "--cell_num_threshold"),
         ("clumap_dapi_grid_interval", "--dapi_grid_interval"),
         ("clumap_cell_radius", "--cell_radius"),
@@ -470,6 +471,8 @@ def load_config(config_path: Path) -> LoadedConfig:
     parser = configparser.ConfigParser(
         # 旧批次 INI 未配置新开关时，沿用 wrapper 的关闭默认值。
         defaults={
+            "clumap_conda_env": "ClusterMapV2",
+            "prepare_tile_config_maf_offset": "auto",
             "preTIFF_out": "false",
             "alignTIFF_out": "false",
             "mergedTIFFout": "false",
@@ -871,7 +874,16 @@ def _base_command(
     for config_key, wrapper_flag in spec.args:
         command.extend((wrapper_flag, section[config_key]))
     if spec.sample_position_offset_flag is not None:
-        command.extend((spec.sample_position_offset_flag, str(sample.position_offset)))
+        raw_offset = section[f"{spec.prefix}_maf_offset"].strip()
+        if raw_offset == "auto":
+            position_offset = sample.position_offset
+        elif raw_offset.isascii() and raw_offset.isdecimal():
+            position_offset = int(raw_offset)
+        else:
+            raise ValueError(
+                f"{section.name}.{spec.prefix}_maf_offset must be auto or a non-negative integer"
+            )
+        command.extend((spec.sample_position_offset_flag, str(position_offset)))
     return command
 
 
