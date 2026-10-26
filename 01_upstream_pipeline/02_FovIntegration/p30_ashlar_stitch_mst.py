@@ -322,24 +322,29 @@ class MSTEdgeAligner(EdgeAligner):
         pos0 = self.metadata.positions
         target = pos0[t2] - pos0[t1] + shifts
         w = np.exp(-np.minimum(err, 50.0))
-        _, _, active, _ = self._robust_lsq(t1, t2, target, w, within_shift, within_shift)
+        _, _, active, _ = self._robust_lsq(
+            t1, t2, target, w, within_shift, within_shift
+        )
         bridges = self._bridges(t1[active], t2[active])
-        not_bridge = np.array([frozenset((a, b)) not in bridges for a, b in zip(t1, t2)])
+        not_bridge = np.array(
+            [frozenset((a, b)) not in bridges for a, b in zip(t1, t2)]
+        )
         return active & not_bridge
 
     def build_spanning_tree(self):
         g = nx.Graph()
         g.add_nodes_from(self.neighbors_graph)
-        g.add_weighted_edges_from(
-            (a, b, w) for (a, b), (_, w) in self._cache.items()
-        )
+        g.add_weighted_edges_from((a, b, w) for (a, b), (_, w) in self._cache.items())
         self.spanning_tree = nx.minimum_spanning_tree(g, algorithm="kruskal")
 
         df = self.edge_table
         if df.empty:
             return
         in_mst = np.array(
-            [self.spanning_tree.has_edge(a, b) for a, b in zip(df["tile1"], df["tile2"])]
+            [
+                self.spanning_tree.has_edge(a, b)
+                for a, b in zip(df["tile1"], df["tile2"])
+            ]
         )
         df["in_mst"] = in_mst
         df["edge_source"] = np.where(
@@ -417,7 +422,9 @@ class MSTEdgeAligner(EdgeAligner):
         while True:
             pos = self._solve_lsq(t1[active], t2[active], target[active], w[active])
             resid = np.linalg.norm(pos[t2] - pos[t1] - target, axis=1)
-            cand = np.flatnonzero(active & removable & (resid > self.lsq_max_residual_px))
+            cand = np.flatnonzero(
+                active & removable & (resid > self.lsq_max_residual_px)
+            )
             if not len(cand):
                 break
             bridges = self._bridges(t1[active], t2[active])
@@ -447,7 +454,10 @@ class MSTEdgeAligner(EdgeAligner):
         mat = scipy.sparse.csr_matrix(
             (
                 np.r_[sw, -sw, np.ones(k)],
-                (np.r_[np.arange(m), np.arange(m), m + np.arange(k)], np.r_[t2, t1, anchors]),
+                (
+                    np.r_[np.arange(m), np.arange(m), m + np.arange(k)],
+                    np.r_[t2, t1, anchors],
+                ),
             ),
             shape=(m + k, n),
         )
@@ -479,13 +489,17 @@ def write_edge_diagnostics(aligner, path):
     for i, edge in enumerate(edges):
         t1, t2 = edge
         key = tuple(sorted((t1, t2)))
-        shift, filtered_error = aligner._cache.get(key, (np.array([np.nan, np.nan]), np.inf))
+        shift, filtered_error = aligner._cache.get(
+            key, (np.array([np.nan, np.nan]), np.inf)
+        )
         raw_error = raw_errors[i] if i < len(raw_errors) else np.nan
         nominal_delta = aligner.metadata.positions[t2] - aligner.metadata.positions[t1]
         nominal_overlap = aligner.metadata.size - np.abs(nominal_delta)
         rejected_by_shift = bool(np.any(np.abs(shift) > aligner.max_shift_pixels))
         max_error = getattr(aligner, "max_error", np.nan)
-        rejected_by_error = bool(np.isfinite(raw_error) and np.isfinite(max_error) and raw_error > max_error)
+        rejected_by_error = bool(
+            np.isfinite(raw_error) and np.isfinite(max_error) and raw_error > max_error
+        )
 
         rows.append(
             {
@@ -520,7 +534,9 @@ def write_edge_diagnostics(aligner, path):
         print(f"[Diagnostics] Rejected by shift: {int(df['rejected_by_shift'].sum())}")
         print(f"[Diagnostics] Rejected by error: {int(df['rejected_by_error'].sum())}")
         finite_raw = df["raw_error"].replace([np.inf, -np.inf], np.nan).dropna()
-        finite_filtered = df["filtered_error"].replace([np.inf, -np.inf], np.nan).dropna()
+        finite_filtered = (
+            df["filtered_error"].replace([np.inf, -np.inf], np.nan).dropna()
+        )
         finite_max_error = df["max_error"].replace([np.inf, -np.inf], np.nan).dropna()
         if len(finite_max_error):
             print(f"[Diagnostics] max_error: {finite_max_error.iloc[0]:.3f}")
@@ -538,7 +554,9 @@ def write_edge_diagnostics(aligner, path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Ashlar stitching from TileConfiguration.txt")
+    parser = argparse.ArgumentParser(
+        description="Ashlar stitching from TileConfiguration.txt"
+    )
     parser.add_argument("--input_dir", required=True)
     parser.add_argument("--config_file", required=True)
     parser.add_argument(
@@ -554,7 +572,9 @@ def main():
             "directory containing --config_file so all backends can share it."
         ),
     )
-    parser.add_argument("--make_3d", type=str, default="false", help="true/false string")
+    parser.add_argument(
+        "--make_3d", type=str, default="false", help="true/false string"
+    )
     parser.add_argument(
         "--rotate90",
         action="store_true",
@@ -787,7 +807,9 @@ def main():
         pixel_size_um=args.pixel_size_um,
     )
     aligner_instance.reader = reader_2d_out
-    mosaic_2d = Mosaic(aligner=aligner_instance, shape=aligner_instance.mosaic_shape, verbose=True)
+    mosaic_2d = Mosaic(
+        aligner=aligner_instance, shape=aligner_instance.mosaic_shape, verbose=True
+    )
     writer_2d = PyramidWriter(
         mosaics=[mosaic_2d], path=path_2d, scale=2, tile_size=1024, verbose=True
     )
@@ -796,7 +818,9 @@ def main():
 
     for slice_index in slice_indices:
         path_slice = f"{args.output_image_prefix}_z{slice_index:03d}_2d.ome.tif"
-        print(f"\n=== Phase 3: Writing Z-slice {slice_index} Mosaic to {path_slice} ===")
+        print(
+            f"\n=== Phase 3: Writing Z-slice {slice_index} Mosaic to {path_slice} ==="
+        )
         reader_slice = TiffTxtReader(
             args.input_dir,
             args.config_file,
@@ -810,7 +834,11 @@ def main():
             aligner=aligner_instance, shape=aligner_instance.mosaic_shape, verbose=True
         )
         writer_slice = PyramidWriter(
-            mosaics=[mosaic_slice], path=path_slice, scale=2, tile_size=1024, verbose=True
+            mosaics=[mosaic_slice],
+            path=path_slice,
+            scale=2,
+            tile_size=1024,
+            verbose=True,
         )
         writer_slice.run()
         print(f"Z-slice {slice_index} image saved: {path_slice}")

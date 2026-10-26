@@ -95,7 +95,10 @@ def load_tile_transform(path):
     if tf is None:
         return None
     spec = importlib.util.spec_from_file_location(
-        "joint_rounds", os.path.join(os.path.dirname(os.path.abspath(__file__)), "p31_ashlar_stitch_joint.py")
+        "joint_rounds",
+        os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "p31_ashlar_stitch_joint.py"
+        ),
     )
     joint = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(joint)
@@ -112,14 +115,18 @@ def convert_dtype(image, output_format):
             return image
         if np.issubdtype(image.dtype, np.integer):
             info = np.iinfo(image.dtype)
-            return np.clip(image.astype(np.float32) / info.max * 255, 0, 255).astype(np.uint8)
+            return np.clip(image.astype(np.float32) / info.max * 255, 0, 255).astype(
+                np.uint8
+            )
         return (np.clip(image, 0, 1) * 255).astype(np.uint8)
     if output_format == "uint16":
         if image.dtype == np.uint16:
             return image
         if np.issubdtype(image.dtype, np.integer):
             info = np.iinfo(image.dtype)
-            return np.clip(image.astype(np.float32) / info.max * 65535, 0, 65535).astype(np.uint16)
+            return np.clip(
+                image.astype(np.float32) / info.max * 65535, 0, 65535
+            ).astype(np.uint16)
         return (np.clip(image, 0, 1) * 65535).astype(np.uint16)
     raise ValueError(f"Unsupported output_format: {output_format}")
 
@@ -147,9 +154,7 @@ def _replace_channel_path(fname, channel_from, channel_to):
     token_idx = filename_lower.find(from_name)
     if token_idx >= 0:
         parts[-1] = (
-            filename[:token_idx]
-            + to_name
-            + filename[token_idx + len(from_name):]
+            filename[:token_idx] + to_name + filename[token_idx + len(from_name) :]
         )
         return "/".join(parts)
 
@@ -193,7 +198,9 @@ class TiffDirectReader(reg.PlateReader):
         try:
             img = skimage.io.imread(first_file)
             print(f"[DirectReader] First file: {os.path.basename(first_file)}")
-            print(f"[DirectReader] Raw Shape: {img.shape}, Detected input dtype: {img.dtype}")
+            print(
+                f"[DirectReader] Raw Shape: {img.shape}, Detected input dtype: {img.dtype}"
+            )
             print(f"[DirectReader] Stitch output_format: {self.output_format}")
 
             self.raw_ndim = img.ndim
@@ -337,7 +344,9 @@ def main():
     print(f"Config: {args.config_file}")
     print(f"Output Prefix: {args.output_image_prefix}")
     print(f"Output format: {args.output_format}")
-    print(f"IF tile transform: {'applied from ' + args.tile_transform_json if tile_transform else 'none'}")
+    print(
+        f"IF tile transform: {'applied from ' + args.tile_transform_json if tile_transform else 'none'}"
+    )
 
     print("\n=== Phase 1: Writing 2D MIP Mosaic (Direct, no alignment) ===")
     reader_2d = TiffDirectReader(
@@ -381,7 +390,11 @@ def main():
             aligner=aligner_slice, shape=aligner_slice.mosaic_shape, verbose=True
         )
         writer_slice = PyramidWriter(
-            mosaics=[mosaic_slice], path=path_slice, scale=2, tile_size=1024, verbose=True
+            mosaics=[mosaic_slice],
+            path=path_slice,
+            scale=2,
+            tile_size=1024,
+            verbose=True,
         )
         writer_slice.run()
         print(f"Z-slice {slice_index} image saved: {path_slice}")

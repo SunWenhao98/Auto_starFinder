@@ -37,7 +37,9 @@ from ashlar import reg
 
 _spec = importlib.util.spec_from_file_location(
     "ashlar_stitch_mst",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "p30_ashlar_stitch_mst.py"),
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "p30_ashlar_stitch_mst.py"
+    ),
 )
 st = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(st)
@@ -60,7 +62,12 @@ def resample_tile(img, a):
     _, inv = tile_transform_matrix(a)
     centre = (np.array(img.shape) - 1) / 2.0
     out = scipy.ndimage.affine_transform(
-        img.astype(np.float32), inv, offset=centre - inv @ centre, order=1, mode="constant", cval=0.0
+        img.astype(np.float32),
+        inv,
+        offset=centre - inv @ centre,
+        order=1,
+        mode="constant",
+        cval=0.0,
     )
     return out.astype(img.dtype)
 
@@ -90,7 +97,9 @@ class JointReader(reg.PlateReader):
         m.pixel_size = rm.pixel_size
         m.positions = np.vstack([rm.positions, im.positions + if_offset])
         m.size = rm.size
-        m.filename = [f"ref/{f}" for f in rm.filename] + [f"IF/{f}" for f in im.filename]
+        m.filename = [f"ref/{f}" for f in rm.filename] + [
+            f"IF/{f}" for f in im.filename
+        ]
         m.origin = m.positions.min(axis=0)
         m.pixel_dtype = rm.pixel_dtype
         self._meta = m
@@ -101,7 +110,11 @@ class JointReader(reg.PlateReader):
 
     def read(self, series, c):
         if series not in self._raw:
-            src = self.ref.read(series, c) if series < self.n else self.moving.read(series - self.n, c)
+            src = (
+                self.ref.read(series, c)
+                if series < self.n
+                else self.moving.read(series - self.n, c)
+            )
             self._raw[series] = src
         img = self._raw[series]
         if series >= self.n and self.if_transform is not None:
@@ -124,14 +137,20 @@ def coarse_nominal_offset(reader, positions, scale=COARSE_SCALE):
         m = np.zeros(shape, np.float32)
         for k in range(n):
             img = reader.read(first + k, 0).astype(np.float32)
-            small = img[: size[0] * scale, : size[1] * scale].reshape(size[0], scale, size[1], scale).mean(axis=(1, 3))
+            small = (
+                img[: size[0] * scale, : size[1] * scale]
+                .reshape(size[0], scale, size[1], scale)
+                .mean(axis=(1, 3))
+            )
             y, x = pos[k]
-            m[y:y + size[0], x:x + size[1]] = small
+            m[y : y + size[0], x : x + size[1]] = small
         mosaics.append(scipy.ndimage.gaussian_filter(m, 1.5))
     pad = 2 * shape  # pad so the FFT does not wrap
     pa, pb = np.zeros(pad, np.float32), np.zeros(pad, np.float32)
     pa[: shape[0], : shape[1]], pb[: shape[0], : shape[1]] = mosaics
-    shift, _, _ = skimage.registration.phase_cross_correlation(pa, pb, normalization=None)
+    shift, _, _ = skimage.registration.phase_cross_correlation(
+        pa, pb, normalization=None
+    )
     shift = np.where(shift > pad / 2, shift - pad, shift)
     return shift * scale
 
@@ -139,7 +158,9 @@ def coarse_nominal_offset(reader, positions, scale=COARSE_SCALE):
 def single_round_positions(aligner, n):
     """Ref and IF positions solved separately from the within-round edges of a pass."""
     e = aligner.edge_table
-    use = (e.inlier | (e.edge_source == "fallback")).to_numpy() & (e.group != "ref|IF").to_numpy()
+    use = (e.inlier | (e.edge_source == "fallback")).to_numpy() & (
+        e.group != "ref|IF"
+    ).to_numpy()
     pos, _, _, _ = aligner.solve_lsq_positions(use)
     return pos[:n], pos[n:]
 
@@ -154,8 +175,11 @@ def fit_if_similarity(edge_table, n, p_ref, q_if):
     """
     e = edge_table
     x = e[(e.group == "ref|IF") & e.inlier]
-    obs = p_ref[x.tile1.to_numpy()] + x[["nominal_delta_y_px", "nominal_delta_x_px"]].to_numpy() \
+    obs = (
+        p_ref[x.tile1.to_numpy()]
+        + x[["nominal_delta_y_px", "nominal_delta_x_px"]].to_numpy()
         + x[["shift_y_px", "shift_x_px"]].to_numpy()
+    )
     q = q_if[x.tile2.to_numpy() - n]
     zq, zo = q[:, 1] + 1j * q[:, 0], obs[:, 1] + 1j * obs[:, 0]
     keep = np.ones(len(zq), dtype=bool)
@@ -165,8 +189,12 @@ def fit_if_similarity(edge_table, n, p_ref, q_if):
         r = np.abs(a * zq + b - zo)
         mad = 1.4826 * np.median(np.abs(r[keep] - np.median(r[keep])))
         keep = r <= np.median(r[keep]) + 4 * max(mad, 0.1)
-    return a, dict(rotation_mdeg=float(np.degrees(np.angle(a)) * 1000), scale_ppm=float((abs(a) - 1) * 1e6),
-                   edges_used=int(keep.sum()), residual_median_px=float(np.median(r[keep])))
+    return a, dict(
+        rotation_mdeg=float(np.degrees(np.angle(a)) * 1000),
+        scale_ppm=float((abs(a) - 1) * 1e6),
+        edges_used=int(keep.sum()),
+        residual_median_px=float(np.median(r[keep])),
+    )
 
 
 def write_tile_config(path, filenames, positions):
@@ -179,10 +207,22 @@ def write_tile_config(path, filenames, positions):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Joint ashlar stitching of the ref round and the IF round")
-    parser.add_argument("--ref_dir", required=True, help="Per-FOV ref-round DAPI images (e.g. raw-refDAPI)")
-    parser.add_argument("--if_dir", required=True, help="Per-FOV IF-round DAPI images (e.g. raw-DAPI)")
-    parser.add_argument("--config_file", required=True, help="Nominal TileConfiguration (shared FOV list)")
+    parser = argparse.ArgumentParser(
+        description="Joint ashlar stitching of the ref round and the IF round"
+    )
+    parser.add_argument(
+        "--ref_dir",
+        required=True,
+        help="Per-FOV ref-round DAPI images (e.g. raw-refDAPI)",
+    )
+    parser.add_argument(
+        "--if_dir", required=True, help="Per-FOV IF-round DAPI images (e.g. raw-DAPI)"
+    )
+    parser.add_argument(
+        "--config_file",
+        required=True,
+        help="Nominal TileConfiguration (shared FOV list)",
+    )
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--prefix", default="joint_ref-IF")
     parser.add_argument("--ref_config_name", default="TileConfiguration.joint_ref.txt")
@@ -193,25 +233,38 @@ def main():
     parser.add_argument("--lsq_max_residual_px", type=float, default=3.0)
     parser.add_argument("--rotate90", action="store_true", default=False)
     parser.add_argument(
-        "--rotation_threshold_mdeg", type=float, default=10.0,
+        "--rotation_threshold_mdeg",
+        type=float,
+        default=10.0,
         help="Resample IF FOVs and re-solve when the fitted IF->ref rotation exceeds this (millidegrees).",
     )
     args = parser.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
     out = os.path.join(args.output_dir, args.prefix)
 
-    ref_reader = st.TiffTxtReader(args.ref_dir, args.config_file, mode="mip", rotate90=args.rotate90)
-    if_reader = st.TiffTxtReader(args.if_dir, args.config_file, mode="mip", rotate90=args.rotate90)
+    ref_reader = st.TiffTxtReader(
+        args.ref_dir, args.config_file, mode="mip", rotate90=args.rotate90
+    )
+    if_reader = st.TiffTxtReader(
+        args.if_dir, args.config_file, mode="mip", rotate90=args.rotate90
+    )
     n = ref_reader.metadata.num_images
     cache = {}
 
-    D = coarse_nominal_offset(JointReader(ref_reader, if_reader, 0, cache=cache), ref_reader.metadata.positions)
-    print(f"[Joint] coarse IF offset vs ref (y, x) = ({D[0]:.1f}, {D[1]:.1f}) px (1/{COARSE_SCALE} nominal mosaics)")
+    D = coarse_nominal_offset(
+        JointReader(ref_reader, if_reader, 0, cache=cache),
+        ref_reader.metadata.positions,
+    )
+    print(
+        f"[Joint] coarse IF offset vs ref (y, x) = ({D[0]:.1f}, {D[1]:.1f}) px (1/{COARSE_SCALE} nominal mosaics)"
+    )
 
     max_shift_px = args.max_shift_frac * ref_reader.tile_size_val.astype(float)
 
     def solve(if_transform):
-        reader = JointReader(ref_reader, if_reader, D, if_transform=if_transform, cache=cache)
+        reader = JointReader(
+            ref_reader, if_reader, D, if_transform=if_transform, cache=cache
+        )
         aligner = st.MSTEdgeAligner(
             reader,
             outlier_sigma=args.shift_outlier_sigma,
@@ -232,9 +285,11 @@ def main():
     P, Q = single_round_positions(aligner, n)
     if_transform = None
     a_new, rotation = fit_if_similarity(aligner.edge_table, n, P, Q)
-    print(f"[Joint] IF->ref similarity: rotation {rotation['rotation_mdeg']:+.1f} mdeg, "
-          f"scale {rotation['scale_ppm']:+.0f} ppm ({rotation['edges_used']} cross edges, "
-          f"fit residual median {rotation['residual_median_px']:.2f} px)")
+    print(
+        f"[Joint] IF->ref similarity: rotation {rotation['rotation_mdeg']:+.1f} mdeg, "
+        f"scale {rotation['scale_ppm']:+.0f} ppm ({rotation['edges_used']} cross edges, "
+        f"fit residual median {rotation['residual_median_px']:.2f} px)"
+    )
     if abs(rotation["rotation_mdeg"]) > args.rotation_threshold_mdeg:
         st.write_mst_edge_diagnostics(aligner, f"{out}_pass1_edge_alignment.csv")
         # Cross matches improve once IF FOVs are rotated, which sharpens the
@@ -244,13 +299,17 @@ def main():
             print("[Joint] re-solving with resampled IF FOVs")
             aligner = solve(if_transform)
             a_new, rotation = fit_if_similarity(aligner.edge_table, n, P, Q)
-            print(f"[Joint] IF->ref similarity: rotation {rotation['rotation_mdeg']:+.1f} mdeg, "
-                  f"scale {rotation['scale_ppm']:+.0f} ppm ({rotation['edges_used']} cross edges, "
-                  f"fit residual median {rotation['residual_median_px']:.2f} px)")
+            print(
+                f"[Joint] IF->ref similarity: rotation {rotation['rotation_mdeg']:+.1f} mdeg, "
+                f"scale {rotation['scale_ppm']:+.0f} ppm ({rotation['edges_used']} cross edges, "
+                f"fit residual median {rotation['residual_median_px']:.2f} px)"
+            )
             if abs(np.angle(a_new / if_transform)) < np.radians(1e-3):
                 break
     else:
-        print(f"[Joint] rotation below {args.rotation_threshold_mdeg:g} mdeg: IF FOVs used as is")
+        print(
+            f"[Joint] rotation below {args.rotation_threshold_mdeg:g} mdeg: IF FOVs used as is"
+        )
     st.write_mst_edge_diagnostics(aligner, f"{out}_edge_alignment.csv")
 
     pos = aligner.positions
@@ -274,9 +333,12 @@ def main():
     pd.DataFrame(
         {
             "position": [os.path.splitext(st.tileconfig_name(f))[0] for f in names],
-            "ref_y": pos[:n, 0], "ref_x": pos[:n, 1],
-            "if_y": pos[n:, 0], "if_x": pos[n:, 1],
-            "shift_y": shift[:, 0], "shift_x": shift[:, 1],
+            "ref_y": pos[:n, 0],
+            "ref_x": pos[:n, 1],
+            "if_y": pos[n:, 0],
+            "if_x": pos[n:, 1],
+            "shift_y": shift[:, 0],
+            "shift_x": shift[:, 1],
             "if_rotation_mdeg": rotation["rotation_mdeg"],
             "if_tile_transform_applied": if_transform is not None,
         }
@@ -288,34 +350,54 @@ def main():
     groups = {}
     for g, sub in e.groupby("group"):
         r = sub.loc[sub.lsq_active & sub.inlier, "lsq_residual_px"]
-        groups[g] = dict(edges=int(len(sub)), inlier=int(sub.inlier.sum()),
-                         rescued=int(sub.rescued_by_loop.sum()), lsq_removed=int(sub.lsq_removed.sum()),
-                         residual_median=float(r.median()) if len(r) else None,
-                         residual_p90=float(r.quantile(0.9)) if len(r) else None,
-                         residual_max=float(r.max()) if len(r) else None)
+        groups[g] = dict(
+            edges=int(len(sub)),
+            inlier=int(sub.inlier.sum()),
+            rescued=int(sub.rescued_by_loop.sum()),
+            lsq_removed=int(sub.lsq_removed.sum()),
+            residual_median=float(r.median()) if len(r) else None,
+            residual_p90=float(r.quantile(0.9)) if len(r) else None,
+            residual_max=float(r.max()) if len(r) else None,
+        )
     origin_ref, origin_if = pos[:n].min(axis=0), pos[n:].min(axis=0)
     summary = dict(
-        coarse_if_offset_yx=D.tolist(), edge_groups=groups,
-        canvas_origin_ref_yx=origin_ref.tolist(), canvas_origin_if_yx=origin_if.tolist(),
+        coarse_if_offset_yx=D.tolist(),
+        edge_groups=groups,
+        canvas_origin_ref_yx=origin_ref.tolist(),
+        canvas_origin_if_yx=origin_if.tolist(),
         if_canvas_to_ref_canvas_yx=(origin_if - origin_ref).tolist(),
         estimated_if_to_ref_similarity=rotation,
-        if_tile_transform=None if if_transform is None else dict(
-            complex_a=[float(if_transform.real), float(if_transform.imag)],
-            matrix_yx=tile_transform_matrix(if_transform)[0].tolist(),
-            note="each IF FOV is resampled about its centre by z -> a*z (z = x + i*y) before placement; "
-                 "direct stitching of IF channels must apply the same transform (--tile_transform_json)"),
+        if_tile_transform=(
+            None
+            if if_transform is None
+            else dict(
+                complex_a=[float(if_transform.real), float(if_transform.imag)],
+                matrix_yx=tile_transform_matrix(if_transform)[0].tolist(),
+                note="each IF FOV is resampled about its centre by z -> a*z (z = x + i*y) before placement; "
+                "direct stitching of IF channels must apply the same transform (--tile_transform_json)",
+            )
+        ),
         note="ref_canvas_px = if_canvas_px + if_canvas_to_ref_canvas_yx (canvases from direct stitching each config)",
-        tile_config_ref=cfg_ref, tile_config_if=cfg_if, if_fov_shifts=f"{out}_if_fov_shifts.csv",
+        tile_config_ref=cfg_ref,
+        tile_config_if=cfg_if,
+        if_fov_shifts=f"{out}_if_fov_shifts.csv",
     )
     with open(f"{out}_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
     for g, v in groups.items():
-        res = "/".join("n/a" if v[k] is None else f"{v[k]:.2f}" for k in ("residual_median", "residual_p90", "residual_max"))
-        print(f"[Joint] {g:7s} edges={v['edges']:4d} inlier={v['inlier']:4d} rescued={v['rescued']:3d} "
-              f"residual median/p90/max = {res} px")
+        res = "/".join(
+            "n/a" if v[k] is None else f"{v[k]:.2f}"
+            for k in ("residual_median", "residual_p90", "residual_max")
+        )
+        print(
+            f"[Joint] {g:7s} edges={v['edges']:4d} inlier={v['inlier']:4d} rescued={v['rescued']:3d} "
+            f"residual median/p90/max = {res} px"
+        )
     d = summary["if_canvas_to_ref_canvas_yx"]
     print(f"[Joint] ref_canvas = IF_canvas + ({d[0]:.2f}, {d[1]:.2f}) px")
-    print(f"[Joint] wrote {cfg_ref}, {cfg_if}, {out}_if_fov_shifts.csv, {out}_summary.json")
+    print(
+        f"[Joint] wrote {cfg_ref}, {cfg_if}, {out}_if_fov_shifts.csv, {out}_summary.json"
+    )
 
 
 if __name__ == "__main__":
