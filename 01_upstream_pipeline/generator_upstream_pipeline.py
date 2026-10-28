@@ -79,9 +79,38 @@ COUNT_MATRIX_ARGS: ArgMap = CONDA_SH_ARG + (
 )
 
 
+CLUMAP_ARGS: ArgMap = CONDA_SH_ARG + COMMON_ARGS + (
+    ("ref_round", "--ref_round"),
+    ("clumap_conda_env", "--conda_env"),
+    ("clumap_cell_num_threshold", "--cell_num_threshold"),
+    ("clumap_dapi_grid_interval", "--dapi_grid_interval"),
+    ("clumap_cell_radius", "--cell_radius"),
+    ("clumap_pct_filter", "--pct_filter"),
+    ("clumap_rotation", "--rotation"),
+    ("clumap_extra_preprocess", "--extra_preprocess"),
+    ("clumap_sub_span", "--sub_span"),
+    ("clumap_expected_workers", "--expected_workers"),
+    ("clumap_reads_filter", "--reads_filter"),
+    ("clumap_overlap_percent", "--overlap_percent"),
+    ("clumap_dapi_suffix", "--dapi_suffix"),
+    ("clumap_spot_csv_name", "--spot_csv_name"),
+    ("clumap_output_label", "--output_label"),
+    ("clumap_binary_source", "--binary_source"),
+    ("clumap_nuclei_erode", "--nuclei_erode"),
+    ("clumap_nuclei_zgap", "--nuclei_zgap"),
+    ("clumap_sub_num", "--sub_num"),
+    ("clumap_radius_factor", "--radius_factor"),
+    ("clumap_radius_from", "--radius_from"),
+    ("clumap_radius_intercept", "--radius_intercept"),
+    ("clumap_radius_stat", "--radius_stat"),
+    ("clumap_anisotropy", "--anisotropy"),
+    ("clumap_offset", "--offset"),
+)
+
+
 STEP_ORDER = (
     "gr", "lr_subtile", "lr_fov", "ls", "gspf", "grd", "egc", "atlas", "pairwise",
-    "dapi_cp", "clumap", "rna_restore", "nuclei_reg", "prepare_layout",
+    "dapi_cp", "clumap", "clumap_tiled", "rna_restore", "nuclei_reg", "prepare_layout",
     "prepare_tile_config", "fiji_stitch_initial", "ashlar_stitch_initial", "ashlar_mst_stitch",
     "prepare_moveimages", "fiji_stitch_mosaic", "ashlar_stitch_mosaic",
     "pyreg", "matreg", "reg_compare", "transform_apply",
@@ -175,25 +204,21 @@ STEP_SPECS = {
         ("ref_round", "--ref_round"),
         ("dapi_cp_diameter", "--diameter"),
         ("dapi_cp_area_threshold", "--area_threshold"),
+        ("dapi_cp_save_3d", "--save_3d"),
+        ("dapi_cp_seg_3d", "--seg_3d"),
+        ("dapi_cp_anisotropy", "--anisotropy"),
+        ("dapi_cp_min_voxels", "--min_voxels"),
+        ("dapi_cp_junk_contrast", "--junk_contrast"),
+        ("dapi_cp_junk_solidity", "--junk_solidity"),
         ("dapi_cp_offset", "--offset"),
     ), log_root_key="seg_log", script_dir_from_wrapper=True),
-    "clumap": StepSpec("run_clustermap", "script_clustermap", "clustermap_seg", "array", "clumap", "logs011_clustermap", CONDA_SH_ARG + COMMON_ARGS + (
-        ("ref_round", "--ref_round"),
-        ("clumap_conda_env", "--conda_env"),
-        ("clumap_cell_num_threshold", "--cell_num_threshold"),
-        ("clumap_dapi_grid_interval", "--dapi_grid_interval"),
-        ("clumap_cell_radius", "--cell_radius"),
-        ("clumap_pct_filter", "--pct_filter"),
-        ("clumap_rotation", "--rotation"),
-        ("clumap_extra_preprocess", "--extra_preprocess"),
-        ("clumap_sub_span", "--sub_span"),
-        ("clumap_expected_workers", "--expected_workers"),
-        ("clumap_reads_filter", "--reads_filter"),
-        ("clumap_overlap_percent", "--overlap_percent"),
-        ("clumap_dapi_suffix", "--dapi_suffix"),
-        ("clumap_spot_csv_name", "--spot_csv_name"),
-        ("clumap_output_label", "--output_label"),
-        ("clumap_offset", "--offset"),
+    "clumap": StepSpec("run_clustermap", "script_clustermap", "clustermap_seg", "array", "clumap", "logs011_clustermap", CLUMAP_ARGS,
+                       log_root_key="seg_log", script_dir_from_wrapper=True),
+    "clumap_tiled": StepSpec("run_clustermap_tiled", "script_clustermap_tiled", "clustermap_tiled", "single", "clumap_tiled", "logs011_clustermap", CLUMAP_ARGS + (
+        ("clumap_partition", "--partition"),
+        ("clumap_prepare_cpus", "--prepare_cpus"),
+        ("clumap_tile_cpus", "--tile_cpus"),
+        ("clumap_merge_cpus", "--merge_cpus"),
     ), log_root_key="seg_log", script_dir_from_wrapper=True),
     "rna_restore": StepSpec("run_rna_restore", "script_rna_restore", "RNA_restore_suffix", "array", "rna_restore", "logs021_RNA_restore_suffix", CONDA_SH_ARG + COMMON_ARGS + (
         ("rna_restore_raw_csv", "--raw_csv"),
@@ -558,6 +583,21 @@ def load_config(config_path: Path) -> LoadedConfig:
             "lr_subtile_cleanup_gr_subtile_mat": "false",
             "lr_fov_cleanup_gr_subtile_mat": "false",
             "ls_cleanup_lr_subtile_mat": "false",
+            "dapi_cp_save_3d": "false",
+            "dapi_cp_seg_3d": "false",
+            "dapi_cp_anisotropy": "1",
+            "dapi_cp_min_voxels": "10000",
+            "dapi_cp_junk_contrast": "1.3",
+            "dapi_cp_junk_solidity": "0.8",
+            "clumap_binary_source": "otsu",
+            "clumap_nuclei_erode": "3",
+            "clumap_nuclei_zgap": "1",
+            "clumap_sub_num": "0",
+            "clumap_radius_factor": "0",
+            "clumap_radius_from": "size",
+            "clumap_radius_intercept": "0",
+            "clumap_radius_stat": "mean",
+            "clumap_anisotropy": "1",
         },
         interpolation=configparser.BasicInterpolation(),
         inline_comment_prefixes=(";",),
@@ -1015,6 +1055,12 @@ def render_submission_script(config: LoadedConfig) -> str:
         ):
             raise ValueError(
                 f"{section_name} cannot enable both run_local_reg_subtile and run_local_reg_fov"
+            )
+        if section.getboolean("run_clustermap", fallback=False) and section.getboolean(
+            "run_clustermap_tiled", fallback=False
+        ):
+            raise ValueError(
+                f"{section_name} cannot enable both run_clustermap and run_clustermap_tiled"
             )
     lines = [
         "#!/bin/bash",

@@ -3,18 +3,67 @@ import os
 import math
 import argparse
 import functools
+import shutil
+from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import tifffile as tiff
 import matplotlib.pyplot as plt
 from scipy import ndimage
+from scipy.spatial import cKDTree
 from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
 
 from ClusterMap.clustermap import *
+from skimage.morphology import disk
 # ==========================================
 # Helper Functions
 # ==========================================
+
+def nuclei_binary(labels_zyx, rotation_deg, erode, zgap=0):
+    """3D nucleus labels (Z, Y, X, raw DAPI orientation) -> (Y, X, Z) binary aligned with dapi_processed.
+
+    Each label is eroded by `erode` px within every layer: a pixel is kept only if every pixel of
+    the disk around it carries the same label, so touching nuclei end up 2*erode px apart.
+    Nuclei touching in z are kept `zgap` layers apart.
+    """
+    if rotation_deg % 90 != 0:
+        raise ValueError("--binary_source cellpose supports rotations by multiples of 90 only")
+    labels = np.rot90(labels_zyx, k=-(rotation_deg // 90), axes=(1, 2))
+    if zgap > 0:
+        labels = labels.copy()
+        for _ in range(zgap):
+            other = (labels[:-1] > 0) & (labels[1:] > 0) & (labels[:-1] != labels[1:])
+            clash = np.zeros(labels.shape, dtype=bool)
+            clash[:-1] |= other
+            clash[1:] |= other
+            labels[clash] = 0
+    if erode > 0:
+        footprint = disk(erode)
+        binary = np.zeros(labels.shape, dtype=bool)
+        for z in range(labels.shape[0]):
+            low = ndimage.grey_erosion(labels[z], footprint=footprint)
+            high = ndimage.grey_dilation(labels[z], footprint=footprint)
+            binary[z] = (labels[z] > 0) & (low == high)
+    else:
+        binary = labels > 0
+    return np.transpose(binary, (1, 2, 0))
+
+def nuclei_footprints(labels_zyx, rotation_deg, anisotropy):
+    """(row, col, radius, spacing) of each nucleus in the dapi_processed frame, radius from its xy footprint area,
+    spacing = distance to the nearest other nucleus centre with z scaled by `anisotropy`."""
+    labels = np.rot90(labels_zyx, k=-(rotation_deg // 90), axes=(1, 2))
+    rows = []
+    for o, sl in enumerate(ndimage.find_objects(labels), start=1):
+        if sl is not None:
+            m = labels[sl] == o
+            r, c = np.nonzero(m.any(axis=0))
+            rows.append((r.mean() + sl[1].start, c.mean() + sl[2].start, np.sqrt(len(r) / np.pi),
+                         np.nonzero(m)[0].mean() + sl[0].start))
+    rows = np.array(rows).reshape(-1, 4)
+    centres = np.c_[rows[:, :2], rows[:, 3] * anisotropy]
+    spacing = cKDTree(centres).query(centres, k=2)[0][:, 1] if len(rows) else np.empty(0)
+    return np.c_[rows[:, :3], spacing]
 
 def rotate_points(xy, radians, origin=(0, 0)):
     x, y = xy
@@ -34,6 +83,40 @@ def rotate_points(xy, radians, origin=(0, 0)):
     
     return pd.DataFrame({'column': qx, 'row': qy})
 
+TILE_RESULT_KEYS = ('spots', 'all_points', 'all_points_cellid', 'cellcenter', 'cellcenter_unique', 'cellid_unique')
+
+def tile_path(work_dir, tile_idx, kind):
+    return os.path.join(work_dir, f"tile_{tile_idx:03d}_{kind}.pkl")
+
+PICKLE_GZIP = {'method': 'gzip', 'compresslevel': 1}
+
+def write_pickle(obj, path):
+    """Write next to the target and rename, so a reader never sees a partial file."""
+    pd.to_pickle(obj, path + ".part", compression=PICKLE_GZIP)
+    os.replace(path + ".part", path)
+
+def run_tile_stage(args):
+    """--stage tile: one subtile from the prepare stage's input; keeps only what model.stitch() reads."""
+    src = tile_path(args.work_dir, args.tile_index, "in")
+    if not os.path.exists(src):
+        print(f"No input for tile {args.tile_index} (prepare wrote fewer tiles or none): {src}")
+        return
+    tile = pd.read_pickle(src, compression='gzip')
+    global pct_filter  # process_tile reads it as a module global, set in __main__ for the other stages
+    pct_filter = tile['pct_filter']
+    out = pd.DataFrame([tile['row']], index=[args.tile_index])
+    model_tile = process_tile(args.tile_index, out=out, model_params=tile['params'])
+    keep = None if model_tile is None else {k: getattr(model_tile, k) for k in TILE_RESULT_KEYS if hasattr(model_tile, k)}
+    write_pickle(keep, tile_path(args.work_dir, args.tile_index, "out"))
+    print(f"Tile {args.tile_index}: {'no cells' if keep is None else 'done'}")
+
+def load_tile_result(work_dir, tile_idx):
+    path = tile_path(work_dir, tile_idx, "out")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"tile result missing: {path}")
+    keep = pd.read_pickle(path, compression='gzip')
+    return None if keep is None else SimpleNamespace(**keep)
+
 def process_tile(tile_split, out, model_params):
     """
     Worker function for parallel processing of image tiles.
@@ -46,7 +129,7 @@ def process_tile(tile_split, out, model_params):
         use_own_dapi = model_params['use_own_dapi']
         gene_list = model_params['gene_list']
         num_dims = model_params['num_dims']
-        xy_radius = model_params['xy_radius']
+        xy_radius = int(out.loc[tile_split, 'xy_radius']) if 'xy_radius' in out.columns else model_params['xy_radius']
         z_radius = model_params['z_radius']
         filter_val = model_params['filter_value']
 
@@ -68,6 +151,21 @@ def process_tile(tile_split, out, model_params):
             model_tile.dapi = dapi_tile
             model_tile.dapi_binary = dapi_bi_tile
             model_tile.dapi_stacked = dapi_bi_max_tile
+        elif model_params['binary_source'] == 'cellpose':
+            nuclei_tile = out.loc[tile_split, 'binary'] > 0
+            if not nuclei_tile[::dapi_grid_interval, ::dapi_grid_interval, ::dapi_grid_interval].any():
+                # add_dapi_points fails on a window without nucleus voxels
+                print(f"Tile {tile_split}: no nucleus voxel on the DAPI sampling grid, skipped")
+                return None
+            model_tile = ClusterMap(
+                spots=spots_tile, dapi=None, gene_list=gene_list,
+                num_dims=num_dims, xy_radius=xy_radius, z_radius=z_radius,
+                fast_preprocess=False
+            )
+            model_tile.dapi = dapi_tile
+            model_tile.dapi_binary = nuclei_tile
+            model_tile.dapi_stacked = nuclei_tile.max(2)
+            model_tile.preprocess(dapi_grid_interval=dapi_grid_interval, pct_filter=pct_filter)
         else:
             model_tile = ClusterMap(
                 spots=spots_tile, dapi=dapi_tile, gene_list=gene_list,
@@ -126,8 +224,26 @@ def get_args():
 
     parser.add_argument('--sqrt_pieces', type=int, default=2, help='parts of the tiling window (default: 4)')
 
+    parser.add_argument('--binary_source', choices=['otsu', 'cellpose'], default='otsu', help='DAPI binary: ClusterMap Otsu or --nuclei_labels')
+    parser.add_argument('--nuclei_labels', type=str, default=None, help='3D nucleus label tif (Z, Y, X)')
+    parser.add_argument('--nuclei_erode', type=int, default=3, help='xy erosion of each nucleus in px')
+    parser.add_argument('--nuclei_zgap', type=int, default=1, help='layers between nuclei touching in z')
+    parser.add_argument('--sub_num', type=int, default=0, help='subtiles per side, replaces --sub_span when > 0')
+    parser.add_argument('--radius_factor', type=float, default=0, help='xy radius per subtile = factor x mean (see --radius_stat) nucleus radius (or spacing) + intercept when > 0')
+    parser.add_argument('--radius_intercept', type=float, default=0, help='added to factor x nucleus radius (or spacing), for --radius_factor')
+    parser.add_argument('--radius_stat', choices=['mean', 'median'], default='mean', help='statistic of the subtile nuclei, for --radius_factor')
+    parser.add_argument('--radius_from', choices=['size', 'spacing'], default='size', help='nucleus radius or distance to the nearest nucleus')
+    parser.add_argument('--anisotropy', type=float, default=1.0, help='z step / xy pixel size, for --radius_from spacing')
+    parser.add_argument('--stage', choices=['all', 'prepare', 'tile', 'merge'], default='all',
+                        help='all: one job; prepare: write subtile inputs; tile: run --tile_index; merge: stitch tile results')
+    parser.add_argument('--tile_index', type=int, default=-1, help='subtile for --stage tile (0-based)')
+
     
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.stage == 'tile' and args.tile_index < 0:
+        parser.error('--stage tile needs --tile_index')
+    args.work_dir = os.path.join(args.output_path, 'tiles')  # subtile inputs and results of a staged run
+    return args
 
 # ==========================================
 # Main Execution
@@ -142,6 +258,9 @@ if __name__ == '__main__':
         module = sys.modules.get(module_name)
         if module is not None:
             print(f"PACKAGE_ORIGIN {module_name}={module.__file__}", flush=True)
+    if args.stage == 'tile':
+        run_tile_stage(args)
+        sys.exit()
     
     # 1. Setup Parameters
     cell_num_threshold = float(args.cell_num_threshold)
@@ -276,15 +395,41 @@ if __name__ == '__main__':
     gene_list = np.arange(1, num_gene + 1)
     num_dims = len(dapi_processed.shape)
     
+    use_nuclei = args.binary_source == 'cellpose'
+    if args.radius_factor > 0 and not use_nuclei:
+        print("Error: --radius_factor needs --binary_source cellpose")
+        sys.exit(1)
+    if use_nuclei:
+        if use_own_dapi:
+            print("Error: --binary_source cellpose needs --extra_preprocess F")
+            sys.exit(1)
+        if not args.nuclei_labels or not os.path.exists(args.nuclei_labels):
+            print(f"Error: nuclei labels not found at {args.nuclei_labels}")
+            sys.exit(1)
+        nuclei_zyx = tiff.imread(args.nuclei_labels)
+        if nuclei_zyx.shape != dapi.shape:
+            print(f"Error: nuclei labels {nuclei_zyx.shape} do not match DAPI {dapi.shape}")
+            sys.exit(1)
+        nuclei_bi = nuclei_binary(nuclei_zyx, ROTATION_DEG, args.nuclei_erode, args.nuclei_zgap)
+        if args.radius_factor > 0:
+            nuclei = nuclei_footprints(nuclei_zyx, ROTATION_DEG, args.anisotropy)
+        del nuclei_zyx
+        print(f"Nuclei binary from {args.nuclei_labels}: {nuclei_bi.mean():.2%} of voxels")
+
     model = ClusterMap(
         spots=spots, 
-        dapi=dapi_processed if not use_own_dapi else None, 
+        dapi=dapi_processed if not (use_own_dapi or use_nuclei) else None, 
         gene_list=gene_list, 
         num_dims=num_dims,
         xy_radius=xy_radius, 
         z_radius=z_radius,
         fast_preprocess=use_own_dapi
     )
+
+    if use_nuclei:
+        model.dapi = dapi_processed
+        model.dapi_binary = nuclei_bi
+        model.dapi_stacked = nuclei_bi.max(2)
 
     if use_own_dapi:
         dapi_bi = dapi_processed > 1 
@@ -307,11 +452,33 @@ if __name__ == '__main__':
     # 6. Tiling & Segmentation
     print("Starting Tiled Segmentation...")
     img_for_split = dapi_processed
+    if args.sub_num > 0:
+        # split() adds a row and a column when the size divides evenly
+        WINDOW_SIZE = -(-(max(dapi_processed.shape[:2]) + 1) // args.sub_num)
     label_img = get_img(img_for_split, model.spots, window_size=WINDOW_SIZE, 
                         margin=math.ceil(WINDOW_SIZE * OVERLAP_PERCENT))
     out = split(img_for_split, label_img, model.spots, window_size=WINDOW_SIZE, 
                 margin=math.ceil(WINDOW_SIZE * OVERLAP_PERCENT))
-    
+    if use_nuclei:
+        out['binary'] = split(nuclei_bi, label_img, model.spots, window_size=WINDOW_SIZE,
+                              margin=math.ceil(WINDOW_SIZE * OVERLAP_PERCENT))['img']
+    if args.radius_factor > 0:
+        margin = math.ceil(WINDOW_SIZE * OVERLAP_PERCENT)
+        last_row, last_col = dapi_processed.shape[0] // WINDOW_SIZE, dapi_processed.shape[1] // WINDOW_SIZE
+        col = 2 if args.radius_from == 'size' else 3
+        stat = np.median if args.radius_stat == 'median' else np.mean
+        tile_radius = []
+        for i, j in zip(out['row'], out['col']):
+            v0, h0 = i * WINDOW_SIZE - margin, j * WINDOW_SIZE - margin
+            v1 = v0 + WINDOW_SIZE + 2 * margin if i < last_row else np.inf
+            h1 = h0 + WINDOW_SIZE + 2 * margin if j < last_col else np.inf
+            inside = (nuclei[:, 0] >= v0) & (nuclei[:, 0] < v1) & (nuclei[:, 1] >= h0) & (nuclei[:, 1] < h1)
+            v = nuclei[inside, col]
+            v = v[np.isfinite(v)]
+            tile_radius.append(int(round(args.radius_factor * stat(v) + args.radius_intercept)) if len(v) else xy_radius)
+        out['xy_radius'] = tile_radius
+        print(f"Per-tile xy radius: {min(tile_radius)}-{max(tile_radius)}")
+
     model.spots['clustermap'] = -1
                 
     model_params = {
@@ -323,16 +490,35 @@ if __name__ == '__main__':
         'num_dims': num_dims,
         'xy_radius': xy_radius,
         'z_radius': z_radius,
-        'filter_value': 1 
+        'filter_value': 1,
+        'binary_source': args.binary_source
     }
 
-    # 单线程版本 - 使用 for 循环替代 ProcessPoolExecutor
-    print(f"Processing {out.shape[0]} tiles sequentially...")
+    if args.stage == 'prepare':
+        shutil.rmtree(args.work_dir, ignore_errors=True)  # never merge results of an earlier run
+        os.makedirs(args.work_dir)
+        for tile_idx in range(out.shape[0]):
+            row = out.loc[tile_idx].copy()
+            if use_nuclei:
+                row['img'] = None  # the nuclei path segments on 'binary'; ClusterMap reads dapi only for hull plots
+            write_pickle({'row': row, 'params': model_params, 'pct_filter': pct_filter},
+                         tile_path(args.work_dir, tile_idx, "in"))
+        print(f"Prepared {out.shape[0]} tiles in {args.work_dir}")
+        sys.exit()
+
+    if args.stage == 'merge':
+        print(f"Stitching {out.shape[0]} tile results from {args.work_dir}...")
+    else:
+        # 单线程版本 - 使用 for 循环替代 ProcessPoolExecutor
+        print(f"Processing {out.shape[0]} tiles sequentially...")
 
     for tile_idx in tqdm(range(out.shape[0]), desc="Processing Tiles"):
         try:
-            # 直接调用 process_tile 函数
-            result = process_tile(tile_idx, out=out, model_params=model_params)
+            # 直接调用 process_tile 函数；merge 读 tile 阶段的结果
+            if args.stage == 'merge':
+                result = load_tile_result(args.work_dir, tile_idx)
+            else:
+                result = process_tile(tile_idx, out=out, model_params=model_params)
 
             if result is not None:
                 model.stitch(result, out, tile_idx)

@@ -50,6 +50,17 @@ DAPI_SUFFIX="ch03.tif"
 SPOT_CSV_NAME="goodPoints_max3d_0.2_tri.csv"
 OUTPUT_LABEL="auto"
 OFFSET="0"
+BINARY_SOURCE="otsu"
+NUCLEI_ERODE="3"
+NUCLEI_ZGAP="1"
+SUB_NUM="0"
+RADIUS_FACTOR="0"
+RADIUS_FROM="size"
+RADIUS_INTERCEPT="0"
+RADIUS_STAT="mean"
+ANISOTROPY="1.0"
+STAGE="all"
+TILES_PER_FOV="25"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -74,6 +85,17 @@ while [[ $# -gt 0 ]]; do
         --spot_csv_name) SPOT_CSV_NAME="$2"; shift 2 ;;
         --output_label) OUTPUT_LABEL="$2"; shift 2 ;;
         --offset) OFFSET="$2"; shift 2 ;;
+        --binary_source) BINARY_SOURCE="$2"; shift 2 ;;
+        --nuclei_erode) NUCLEI_ERODE="$2"; shift 2 ;;
+        --nuclei_zgap) NUCLEI_ZGAP="$2"; shift 2 ;;
+        --sub_num) SUB_NUM="$2"; shift 2 ;;
+        --radius_factor) RADIUS_FACTOR="$2"; shift 2 ;;
+        --radius_from) RADIUS_FROM="$2"; shift 2 ;;
+        --radius_intercept) RADIUS_INTERCEPT="$2"; shift 2 ;;
+        --radius_stat) RADIUS_STAT="$2"; shift 2 ;;
+        --anisotropy) ANISOTROPY="$2"; shift 2 ;;
+        --stage) STAGE="$2"; shift 2 ;;
+        --tiles_per_fov) TILES_PER_FOV="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) print_usage >&2; exit 2 ;;
     esac
@@ -104,6 +126,15 @@ trap finish EXIT
 
 TASK_ID=$((SLURM_ARRAY_TASK_ID + OFFSET))
 POSITION_INDEX=$((TASK_ID - 1))
+TILE_ARGS=()
+case "${STAGE}" in
+    all|prepare|merge) ;;
+    tile)
+        # one array task per subtile: task (1-based) = position_index * TILES_PER_FOV + tile_index + 1
+        POSITION_INDEX=$(((TASK_ID - 1) / TILES_PER_FOV))
+        TILE_ARGS=(--tile_index $(((TASK_ID - 1) % TILES_PER_FOV))) ;;
+    *) echo "Unknown stage: ${STAGE}" >&2; exit 2 ;;
+esac
 printf -v ROUND_DIR "round%03d" "$((10#${REF_ROUND}))"
 REFERENCE_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/01_data/${ROUND_DIR}"
 readarray -t DAPI_FILES < <(find -L "${REFERENCE_DIR}" -maxdepth 2 -type f -name "*${DAPI_SUFFIX}" | sort -V)
@@ -117,6 +148,10 @@ POSITION_NAME=$(basename "$(dirname "${DAPI_FILE}")")
 REGISTRATION_FOLDER="02_registration${REG_DIR_SUFFIX}"
 POSITION_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/${REGISTRATION_FOLDER}/${POSITION_NAME}"
 TRANSCRIPTS_RAW="${POSITION_DIR}/${SPOT_CSV_NAME}"
+if [[ "${OUTPUT_LABEL}" == "auto" && "${STAGE}" != "all" ]]; then
+    echo "--stage ${STAGE} needs an explicit --output_label" >&2
+    exit 2
+fi
 if [[ "${OUTPUT_LABEL}" == "auto" ]]; then
     OUTPUT_DIR="${POSITION_DIR}/seg/clustermap_$(date +%Y%m%d_%H%M%S)_${SLURM_JOB_ID}"
 else
@@ -125,7 +160,9 @@ else
         exit 1
     fi
     OUTPUT_DIR="${POSITION_DIR}/seg/clustermap_${OUTPUT_LABEL}"
-    if [[ -e "${OUTPUT_DIR}" || -L "${OUTPUT_DIR}" ]]; then
+    # a staged run may repeat prepare (memory retry) on its own partial directory, never on a finished one
+    if [[ ( "${STAGE}" == "all" && ( -e "${OUTPUT_DIR}" || -L "${OUTPUT_DIR}" ) ) ||
+          ( "${STAGE}" == "prepare" && -f "${OUTPUT_DIR}/cell_center.csv" ) ]]; then
         echo "ClusterMap output target already exists: ${OUTPUT_DIR}" >&2
         exit 1
     fi
@@ -135,6 +172,22 @@ RUNNER="${SCRIPT_DIR}/run_clustermap_v2.py"
 if [[ ! -f "${RUNNER}" || ! -f "${CONDA_SH}" ]]; then
     echo "Runner or conda initialization path validation failed." >&2
     exit 1
+fi
+case "${BINARY_SOURCE}" in
+    otsu) NUCLEI_LABELS="" ;;
+    cellpose) NUCLEI_LABELS="${POSITION_DIR}/seg/dapi_cellpose/${POSITION_NAME}_dapi2d_cellpose_raw_3d.tif" ;;
+    cellpose3d) NUCLEI_LABELS="${POSITION_DIR}/seg/dapi_cellpose/${POSITION_NAME}_dapi3d_cellpose.tif" ;;
+    *) echo "Unknown binary source: ${BINARY_SOURCE}" >&2; exit 2 ;;
+esac
+if [[ "${BINARY_SOURCE}" == "otsu" ]]; then
+    NUCLEI_ARGS=(--binary_source otsu)
+else
+    if [[ ! -f "${NUCLEI_LABELS}" ]]; then
+        echo "Nuclei labels for --binary_source ${BINARY_SOURCE} not found: ${NUCLEI_LABELS}" >&2
+        exit 1
+    fi
+    NUCLEI_ARGS=(--binary_source cellpose --nuclei_labels "${NUCLEI_LABELS}" --nuclei_erode "${NUCLEI_ERODE}"
+                 --nuclei_zgap "${NUCLEI_ZGAP}")
 fi
 
 print_slurm_info
@@ -152,6 +205,9 @@ echo "RUNNER=${RUNNER}"
 echo "CONDA_SH=${CONDA_SH}"
 echo "CONDA_ENV=${CONDA_ENV}"
 echo "OFFSET=${OFFSET}"
+echo "BINARY_SOURCE=${BINARY_SOURCE}"
+echo "NUCLEI_LABELS=${NUCLEI_LABELS}"
+echo "STAGE=${STAGE} ${TILE_ARGS[*]:-}"
 
 source "${CONDA_SH}"
 set +u
@@ -161,8 +217,10 @@ echo "CONDA_PREFIX=${CONDA_PREFIX:-N/A}"
 echo "PYTHON_EXECUTABLE=$(command -v python)"
 python --version
 
-mkdir -p "${OUTPUT_DIR}"
-sed -e 's/_rbRNA//g' -e 's/_ntRNA//g' "${TRANSCRIPTS_RAW}" > "${TRANSCRIPTS_CLEAN}"
+if [[ "${STAGE}" =~ ^(all|prepare)$ ]]; then
+    mkdir -p "${OUTPUT_DIR}"
+    sed -e 's/_rbRNA//g' -e 's/_ntRNA//g' "${TRANSCRIPTS_RAW}" > "${TRANSCRIPTS_CLEAN}"
+fi
 
 python -u "${RUNNER}" \
     --dapi_path "${DAPI_FILE}" \
@@ -178,9 +236,21 @@ python -u "${RUNNER}" \
     --sub_span "${SUB_SPAN}" \
     --expected_workers "${EXPECTED_WORKERS}" \
     --reads_filter "${READS_FILTER}" \
-    --overlap_percent "${OVERLAP_PERCENT}"
+    --overlap_percent "${OVERLAP_PERCENT}" \
+    --sub_num "${SUB_NUM}" \
+    --radius_factor "${RADIUS_FACTOR}" \
+    --radius_from "${RADIUS_FROM}" \
+    --radius_intercept "${RADIUS_INTERCEPT}" \
+    --radius_stat "${RADIUS_STAT}" \
+    --anisotropy "${ANISOTROPY}" \
+    --stage "${STAGE}" \
+    ${TILE_ARGS[@]+"${TILE_ARGS[@]}"} \
+    "${NUCLEI_ARGS[@]}"
 
-if [[ ! -f "${OUTPUT_DIR}/cell_center.csv" ]]; then
-    echo "ClusterMap did not generate ${OUTPUT_DIR}/cell_center.csv" >&2
-    exit 1
+if [[ "${STAGE}" =~ ^(all|merge)$ ]]; then
+    if [[ ! -f "${OUTPUT_DIR}/cell_center.csv" ]]; then
+        echo "ClusterMap did not generate ${OUTPUT_DIR}/cell_center.csv" >&2
+        exit 1
+    fi
+    rm -rf "${OUTPUT_DIR}/tiles"
 fi

@@ -38,6 +38,12 @@ REF_ROUND="1"
 DIAMETER="100"
 AREA_THRESHOLD="1600"
 OFFSET="0"
+SAVE_3D="false"
+SEG_3D="false"
+ANISOTROPY="1"
+MIN_VOXELS="10000"
+JUNK_CONTRAST="1.3"
+JUNK_SOLIDITY="0.8"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -50,6 +56,12 @@ while [[ $# -gt 0 ]]; do
         --diameter) DIAMETER="$2"; shift 2 ;;
         --area_threshold) AREA_THRESHOLD="$2"; shift 2 ;;
         --offset) OFFSET="$2"; shift 2 ;;
+        --save_3d) SAVE_3D="$2"; shift 2 ;;
+        --seg_3d) SEG_3D="$2"; shift 2 ;;
+        --anisotropy) ANISOTROPY="$2"; shift 2 ;;
+        --min_voxels) MIN_VOXELS="$2"; shift 2 ;;
+        --junk_contrast) JUNK_CONTRAST="$2"; shift 2 ;;
+        --junk_solidity) JUNK_SOLIDITY="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) print_usage >&2; exit 2 ;;
     esac
@@ -112,6 +124,12 @@ echo "CONDA_SH=${CONDA_SH}"
 echo "DIAMETER=${DIAMETER}"
 echo "AREA_THRESHOLD=${AREA_THRESHOLD}"
 echo "OFFSET=${OFFSET}"
+echo "SAVE_3D=${SAVE_3D}"
+echo "SEG_3D=${SEG_3D}"
+echo "ANISOTROPY=${ANISOTROPY}"
+echo "MIN_VOXELS=${MIN_VOXELS}"
+echo "JUNK_CONTRAST=${JUNK_CONTRAST}"
+echo "JUNK_SOLIDITY=${JUNK_SOLIDITY}"
 
 source "${CONDA_SH}"
 set +u
@@ -122,4 +140,11 @@ python -u "${RUNNER}" \
     --input "${DAPI_FILE}" \
     --output_base "${OUTPUT_DIR}/${POSITION_NAME}_dapi2d_cellpose" \
     --diameter "${DIAMETER}" \
-    --threshold "${AREA_THRESHOLD}"
+    --threshold "${AREA_THRESHOLD}" \
+    --save_3d "${SAVE_3D}" \
+    --seg_3d "${SEG_3D}" \
+    --output_base_3d "${OUTPUT_DIR}/${POSITION_NAME}_dapi3d_cellpose" \
+    --anisotropy "${ANISOTROPY}" \
+    --min_voxels "${MIN_VOXELS}" \
+    --junk_contrast "${JUNK_CONTRAST}" \
+    --junk_solidity "${JUNK_SOLIDITY}"
