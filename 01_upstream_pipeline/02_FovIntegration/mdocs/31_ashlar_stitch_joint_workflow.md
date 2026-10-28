@@ -2,8 +2,9 @@
 
 > 3x 是在原有 Fiji（1x）和 Ashlar（2x）流程之外**新增**的一条流程，原有流程不受影响：
 > - `30_ashlar_stitch_mst.sh` / `p30_ashlar_stitch_mst.py`：单轮 ashlar，采用 MST 选边、一致性检查、环路复核和全局 LSQ（可选，用于 QC 或 TE 等单轮拼接）；
-> - `31_ashlar_stitch_joint.sh` / `p31_ashlar_stitch_joint.py`：把参考轮（ref round）和 IF 轮的 FOV 放进同一个 ashlar 拼接问题一起求解，输出同一坐标系下的两份 TileConfiguration；
-> - `32_ashlar_stitch_mosaic_joint.sh` / `p32_ashlar_stitch_mosaic_joint.py`：按联合坐标出图。
+> - `31_ashlar_stitch_joint.sh` / `p31_ashlar_stitch_joint.py`：直接读原始的参考轮（ref round）和 IF 轮，由 MAF 生成名义坐标，把两轮的 FOV 放进同一个 ashlar 拼接问题一起求解，输出同一坐标系下的两份 TileConfiguration；
+> - `32_ashlar_stitch_mosaic_joint.sh` / `p32_ashlar_stitch_mosaic_joint.py`：直接读原始数据，按联合坐标出图（可选平场校正）；
+> - `p33_estimate_flat_field.py`（可选）：用多个样本合起来估计每个通道的平场，供 32 使用。
 
 ---
 
@@ -17,18 +18,33 @@
 | IF 自拼接 + 大图整体平移 | `pyreg`/`matreg`/`reg_compare`/`transform_apply` (25/26/28/29) | 粗定位 + 联合求解 |
 | IF 独立拼接（仅作展示） | `*Independent` channel mode | IF–IF 边 |
 
-3x IF 流程（ini 里打开这四步即可）：
+3x IF 流程（ini 里打开这两步即可）：
 
 ```text
-prepare_tile_config (12)   MAF -> TileConfiguration.initial.txt          （与原有流程共用）
-prepare_layout      (21)   ref 轮 -> raw-refDAPI；IF 轮 -> raw-561-CA9 / raw-488-CD144 / raw-647-CD31 / raw-DAPI（与原有流程共用）
-ashlar_joint_stitch (31)   -> TileConfiguration.joint_ref.txt + TileConfiguration.joint_IF.txt
-ashlar_joint_mosaic (32)   ref 通道用 joint_ref；IF 通道用 joint_IF（加 IF tile 变换）
+ashlar_joint_stitch (31)   原始 ref 轮 DAPI + IF 轮 DAPI，MAF -> TileConfiguration.initial.txt + tile_summary.csv
+                           -> TileConfiguration.joint_ref.txt + TileConfiguration.joint_IF.txt
+ashlar_joint_mosaic (32)   原始数据出图：ref DAPI 用 joint_ref；IF 各通道用 joint_IF（加 IF tile 变换），画在 ref DAPI 的画布上
 ```
+
+联合拼接不需要逐 FOV 配准，31/32 也直接读 `01_data` 里的原始文件，所以 `nuclei_reg` (11)、`prepare_tile_config` (12)、`prepare_layout` (21) 都不用跑，也不会生成它们的文件夹：`15_IFuint8_Fiji` 里配准、裁剪后的 ref-DAPI / DAPI / 蛋白图，`11_refRound1`、`12_IFuint8_Fiji_norefIF` 等 uint8 副本。GBM006 这样的文件夹每个约 120 GB。31 的工作目录（默认 `31_joint_ref_IF`）里只有坐标和结果：
+
+```text
+02_registration<suffix>/31_joint_ref_IF/
+  TileConfiguration.initial.txt  tile_summary.csv                         （31，由 MAF 生成）
+  TileConfiguration.joint_ref.txt  TileConfiguration.joint_IF.txt  joint_ref-IF_*   （31）
+  stitching_results/stitched_joint_{refDAPI,561-CA9,488-CD144,647-CD31,DAPI}*.ome.tif   （32）
+```
+
+- **读哪些文件**：
+  - ref 轮：`01_data/round%03d`（`ref_round`）`/PositionXXX/*ch03*.tif`。
+  - IF 轮：`01_data/IF/PositionXXX/*ch0i*.tif`，通道 i 的顺序按 `channel_mode`，与 21 相同，LeicaIF 为 ch00=561-CA9、ch01=488-CD144、ch02=647-CD31、ch03=DAPI。
+- **只用两轮都有的 Position**：只在一轮里有的 FOV 会列在日志里，不参与拼接。例如 GBM019 的 ref 轮去掉了 31 个 FOV，GBM021 的测序轮少拍了 7 个。
+- **MAF 坐标按 Position 编号对应**：`p12_leica2Stitching_configuration.py` 是把排序后的第 i 个文件对应到第 i 个 MAF 点，缺号时会整体错位。所以 31 先用 Position001..M 的空占位文件跑 p12，再只保留实际使用的 FOV。p12 的参数和 position offset 与 12 相同；目前只支持 Leica（MAF）。
+- **ref 轮是 uint16**：31/32 直接读取。32 输出 uint8 时的换算（÷65535×255）与原来 21 生成 uint8 副本时相同；平场校正在换算之前、用原始精度完成。
 
 `ashlar_mst_stitch` (30) 不是必需步骤；需要单轮 mosaic 做检查，或拼 TE 等单轮数据时可以单独运行。
 
-下游 reads 整合（`cellreads_registered_tile_config`）应使用 `TileConfiguration.joint_ref.txt`：转录本由 ref 轮 tile 的局部坐标加上 tile 位置得到，与蛋白图处在同一个坐标系。
+下游 reads 整合（`cellreads_registered_tile_config`）应使用 `TileConfiguration.joint_ref.txt`：转录本由 ref 轮 tile 的局部坐标加上 tile 位置得到，和 ref DAPI 图、蛋白图在同一块画布上，像素一一对应。
 
 ## 🔗 Runtime call chain
 
@@ -67,33 +83,47 @@ flowchart LR
 | `joint_ref-IF_edge_alignment.csv`（以及 `_pass1_*`） | 每条边的配准、分组、是否可信、LSQ 残差 |
 | `joint_ref-IF_coordinates.csv` | 2N 个 FOV 的最终坐标 |
 
-**画布对应**：direct stitch 会把每份 config 的最小坐标作为各自画布的原点，所以 `ref 画布像素 = IF 画布像素 + if_canvas_to_ref_canvas_yx`。
+**画布对应**：给了 `ref_input_config` 时，32 用 joint_ref 的画布（原点和大小）画 IF 各通道（p32 `--canvas_config`），所有通道和 reads 像素对齐，超出 ref 范围的 IF 部分被裁掉，和原来 24 一样。单独按 joint_IF 出图时，画布原点是它自己的最小坐标，`ref 画布像素 = IF 画布像素 + if_canvas_to_ref_canvas_yx`。
 
 **IF 通道出图**：`32_ashlar_stitch_mosaic_joint.sh --tile_transform_json joint_ref-IF_summary.json`，json 里没有 `if_tile_transform` 时自动不做变换。
+
+**接缝偏暗与平场校正**：视野边缘比中心暗（488/647 上、左边缘有一条陡的暗带，四角约为中心的 0.8），重叠区正好是两张 FOV 的边缘，拼出来接缝会暗 5–10%。
+- `--flat_field auto`：每个通道用本样本全部 FOV 的 MIP 平均（高斯 64 px）作平场，在读图时、旋转和 IF 变换之前，每张 FOV 先除以平场，再转回原整数类型。
+- `--flat_field <目录>`：使用 `p33_estimate_flat_field.py` 由多个样本合起来估计的平场（`<目录>/<通道>.tif`，如 `647-CD31.tif`、`refDAPI.tif`）。
+- 默认 `none`：不校正，保持原行为。
+
+GBM001–022 的平场形状一致，用其他样本合并估计的平场和用本样本平场的效果相同。另外，32 会把 ashlar 混合后的像素四舍五入后再写回整数 mosaic：ashlar 原本是截断取整，暗通道的接缝会因此再暗约 3%。两项都做之后，GBM001 / GBM006 的 488、647 接缝亮度从 0.91–0.92 回到 0.98–1.00。
 
 ## 🔧 ini 配置（`batch_config.upstream.ini`）
 
 ```ini
-run_prepare_tile_config = true
-run_prepare_layout = true          ; ref 轮和 IF 轮都要放进同一个 stitching workdir
 run_ashlar_joint_stitch = true
 run_ashlar_joint_mosaic = true
 
-ashlar_joint_stitch_stitching_workdir = 15_IFuint8_Fiji
-ashlar_joint_stitch_ref_channel_dir = raw-refDAPI
-ashlar_joint_stitch_if_channel_dir = raw-DAPI
-ashlar_joint_stitch_input_config = TileConfiguration.initial.txt
+; 名义坐标沿用 prepare_tile_config_* 的载物台参数（maf_file、pixel_size_um、overlap_ratio ...），
+; position offset 由 [DEFAULT].samples 按样本顺序累计，与 12 相同；ref 轮为 round%03d（ref_round）
+ashlar_joint_stitch_stitching_workdir = 31_joint_ref_IF
+ashlar_joint_stitch_if_round = IF
+ashlar_joint_stitch_ref_channel_token = ch03
+ashlar_joint_stitch_if_channel_token = ch03
 ashlar_joint_stitch_rotation_threshold_mdeg = 10
 
+ashlar_joint_mosaic_channel_mode = LeicaIF
 ashlar_joint_mosaic_input_config = TileConfiguration.joint_IF.txt
 ashlar_joint_mosaic_tile_transform_json = joint_ref-IF_summary.json
-ashlar_joint_mosaic_ref_channel_dir = raw-refDAPI
-ashlar_joint_mosaic_ref_input_config = TileConfiguration.joint_ref.txt
+ashlar_joint_mosaic_ref_input_config = TileConfiguration.joint_ref.txt   ; 留空则不出 ref DAPI 图
+ashlar_joint_mosaic_flat_field = auto      ; none | auto | 平场目录
 
+cellreads_registration_if_dirname = 31_joint_ref_IF
 cellreads_registered_tile_config = TileConfiguration.joint_ref.txt
 ```
 
-## ✅ 验证（GBM001–016，2026-10）
+reads 整合读取 `<if_dirname>/TileConfiguration.initial.txt`、`tile_summary.csv` 和 `TileConfiguration.joint_ref.txt`，三者都由 31 写在它的工作目录里。
+
+## ✅ 验证（GBM001–016、GBM019–021，2026-10）
+
+- 名义坐标：14 个样本由 MAF 生成的 `TileConfiguration.initial.txt` 与原流程（12）的结果逐字一致。GBM019 / GBM021 两轮 FOV 不同，与原流程 ref 路径的坐标一致，GBM019 差一个整体平移。GBM007 / GBM008 原流程里手动去掉了 8 / 4 个 FOV，这里保留全部 FOV，其余坐标一致。
+- 直接读原始数据（ref 轮 uint16）与读 21 生成的 uint8 副本相比，同一代码的联合拼接位置差中位数 ≤ 0.014 px、最大 ≤ 0.14 px。
 
 - 16 个样本全部连成一个整体。跨轮残差中位数 0.18–0.37 px；GBM006–009 约 1 px（IF 轮整体偏约 1.5 个 FOV，跨轮边都是半重叠，加上两轮视野内存在约 0.1% 的几何差异，按决定未做校正）。
 - 边缘和中心的跨轮残差一致，没有随距离累积。

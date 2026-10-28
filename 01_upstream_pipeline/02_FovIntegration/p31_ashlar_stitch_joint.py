@@ -10,9 +10,12 @@ TileConfigurations share one coordinate frame, so ref and IF coordinates
 correspond exactly: the IF->ref offset of FOV k is pos_IF[k] - pos_ref[k]
 (written per FOV to <prefix>_if_fov_shifts.csv).
 
-Inputs are only the nominal (stage) TileConfiguration and the per-FOV ref/IF
-images. The coarse offset comes from low-resolution mosaics at nominal
-positions; it is only used to find cross-round neighbors.
+Inputs are the raw rounds (01_data/<round>/PositionXXX/*_<channel>.tif, read in
+place) and the MAF stage positions. Positions imaged in both rounds are used;
+their nominal TileConfiguration (+ tile_summary.csv) is written from the MAF
+with p12_leica2Stitching_configuration.py, as step 12 does. The coarse offset
+comes from low-resolution mosaics at nominal positions; it is only used to find
+cross-round neighbors.
 
 The IF round's global rotation/scale relative to the ref round is fitted from
 the cross-round edges of a first pass, against single-round positions solved
@@ -28,6 +31,10 @@ import argparse
 import importlib.util
 import json
 import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -43,6 +50,17 @@ _spec = importlib.util.spec_from_file_location(
 )
 st = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(st)
+_spec = importlib.util.spec_from_file_location(
+    "prepare_noRef_layout",
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "p21_prepare_noRef_layout.py"
+    ),
+)
+layout = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(layout)
+P12 = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "p12_leica2Stitching_configuration.py"
+)
 
 COARSE_SCALE = 16
 
@@ -122,6 +140,92 @@ class JointReader(reg.PlateReader):
         return img
 
 
+def raw_tile_files(round_dir, channel):
+    """{'PositionXXX.tif': raw stack} of one channel of a raw round (round_dir/PositionXXX/*<channel>*.tif)."""
+    return {
+        f"{layout.position_name(d)}.tif": str(layout.find_channel_file(d, channel))
+        for d in layout.sorted_position_dirs(Path(round_dir))
+    }
+
+
+def write_nominal_config(
+    output_dir,
+    names,
+    config_name,
+    maf_file,
+    position_offset,
+    project_name,
+    pixel_size_um,
+    image_xy,
+    overlap_ratio,
+    invert_y,
+):
+    """Nominal TileConfiguration (+ tile_summary.csv) of `names` from the MAF, as step 12 writes it.
+
+    p12 pairs the i-th file (sorted by Position number) with the i-th MAF point, which
+    is wrong when positions are missing; it is run on empty placeholders
+    Position001..PositionM and its outputs are then restricted to `names`.
+    """
+    keep = set(names)
+    last = max(int(layout.POSITION_RE.search(n).group(1)) for n in names)
+    raw_cfg = os.path.join(output_dir, "TileConfiguration.txt")
+    if os.path.exists(
+        raw_cfg
+    ):  # p12 writes nothing for an unusable MAF; never read an older run's file
+        os.remove(raw_cfg)
+    with tempfile.TemporaryDirectory() as tmp:
+        for k in range(1, last + 1):
+            open(os.path.join(tmp, f"Position{k:03d}.tif"), "w").close()
+        cmd = [
+            sys.executable,
+            "-u",
+            P12,
+            "--input_dir",
+            tmp,
+            "--output_dir",
+            output_dir,
+            "--maf_file",
+            maf_file,
+            "--position_offset",
+            str(position_offset),
+            "--project_name",
+            project_name,
+            "--match_string",
+            "Position",
+            "--pixel_size_um",
+            str(pixel_size_um),
+            "--image_xy",
+            str(image_xy),
+            "--overlap_ratio",
+            str(overlap_ratio),
+        ]
+        subprocess.run(cmd + (["--invert_y"] if invert_y else []), check=True)
+    with open(raw_cfg) as f:
+        lines = f.readlines()
+    kept = [
+        line for line in lines if ";" not in line or line.split(";")[0].strip() in keep
+    ]
+    if sum(";" in line for line in kept) != len(keep):
+        raise ValueError(
+            f"MAF gives {sum(';' in line for line in kept)} of {len(keep)} positions "
+            f"(MAF too short for position offset {position_offset}?)"
+        )
+    for path in (raw_cfg, os.path.join(output_dir, config_name)):
+        with open(path, "w") as f:
+            f.writelines(kept)
+    summary = os.path.join(
+        output_dir, "tile_summary.csv"
+    )  # first column: relative_path
+    with open(summary) as f:
+        header, *rows = f.readlines()
+    with open(summary, "w") as f:
+        f.writelines([header] + [r for r in rows if r.split(",", 1)[0] in keep])
+    print(
+        f"[Joint] nominal config: {len(keep)} of {last} MAF positions -> {os.path.join(output_dir, config_name)}"
+    )
+    return os.path.join(output_dir, config_name)
+
+
 def coarse_nominal_offset(reader, positions, scale=COARSE_SCALE):
     """Translation D (full-res px, y/x) of the IF round relative to the ref round.
 
@@ -175,6 +279,11 @@ def fit_if_similarity(edge_table, n, p_ref, q_if):
     """
     e = edge_table
     x = e[(e.group == "ref|IF") & e.inlier]
+    if len(x) < 3:
+        raise ValueError(
+            f"{len(x)} inlier ref|IF edges: the IF FOVs did not match the ref round "
+            "(check the IF round, the channel and the coarse offset)"
+        )
     obs = (
         p_ref[x.tile1.to_numpy()]
         + x[["nominal_delta_y_px", "nominal_delta_x_px"]].to_numpy()
@@ -211,17 +320,34 @@ def main():
         description="Joint ashlar stitching of the ref round and the IF round"
     )
     parser.add_argument(
-        "--ref_dir",
-        required=True,
-        help="Per-FOV ref-round DAPI images (e.g. raw-refDAPI)",
+        "--ref_round_dir", required=True, help="Raw ref round, e.g. 01_data/round001"
     )
     parser.add_argument(
-        "--if_dir", required=True, help="Per-FOV IF-round DAPI images (e.g. raw-DAPI)"
+        "--if_round_dir", required=True, help="Raw IF round, e.g. 01_data/IF"
     )
     parser.add_argument(
-        "--config_file",
-        required=True,
-        help="Nominal TileConfiguration (shared FOV list)",
+        "--ref_channel", default="ch03", help="File token of the ref-round DAPI channel"
+    )
+    parser.add_argument(
+        "--if_channel", default="ch03", help="File token of the IF-round DAPI channel"
+    )
+    parser.add_argument(
+        "--maf_file", required=True, help="Leica MAF with the stage positions"
+    )
+    parser.add_argument(
+        "--position_offset", type=int, default=0, help="First MAF point of this sample"
+    )
+    parser.add_argument("--project_name", default="")
+    parser.add_argument(
+        "--pixel_size_um", type=float, default=0.142, help="MAF microns -> pixels"
+    )
+    parser.add_argument("--image_xy", type=int, default=2048)
+    parser.add_argument("--overlap_ratio", type=float, default=0.1)
+    parser.add_argument("--invert_y", action="store_true", default=False)
+    parser.add_argument(
+        "--config_name",
+        default="TileConfiguration.initial.txt",
+        help="Nominal config written here",
     )
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--prefix", default="joint_ref-IF")
@@ -242,11 +368,44 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     out = os.path.join(args.output_dir, args.prefix)
 
+    ref_files = raw_tile_files(args.ref_round_dir, args.ref_channel)
+    if_files = raw_tile_files(args.if_round_dir, args.if_channel)
+    names = sorted(set(ref_files) & set(if_files))
+    if not names:
+        raise ValueError("The ref and IF rounds share no positions")
+    for rnd, a, b in (("ref", ref_files, if_files), ("IF", if_files, ref_files)):
+        only = sorted(set(a) - set(b))
+        if only:
+            print(
+                f"[WARN] {len(only)} positions only in the {rnd} round, not stitched: "
+                + " ".join(os.path.splitext(f)[0] for f in only)
+            )
+    config_file = write_nominal_config(
+        args.output_dir,
+        names,
+        args.config_name,
+        args.maf_file,
+        args.position_offset,
+        args.project_name,
+        args.pixel_size_um,
+        args.image_xy,
+        args.overlap_ratio,
+        args.invert_y,
+    )
+
     ref_reader = st.TiffTxtReader(
-        args.ref_dir, args.config_file, mode="mip", rotate90=args.rotate90
+        args.ref_round_dir,
+        config_file,
+        mode="mip",
+        rotate90=args.rotate90,
+        files=ref_files,
     )
     if_reader = st.TiffTxtReader(
-        args.if_dir, args.config_file, mode="mip", rotate90=args.rotate90
+        args.if_round_dir,
+        config_file,
+        mode="mip",
+        rotate90=args.rotate90,
+        files=if_files,
     )
     n = ref_reader.metadata.num_images
     cache = {}

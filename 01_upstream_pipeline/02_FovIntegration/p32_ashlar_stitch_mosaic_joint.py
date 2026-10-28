@@ -1,8 +1,19 @@
 """
-Ashlar direct stitch from pre-computed TileConfiguration.registered.txt.
+Ashlar mosaic at precomputed positions (as p24), for the joint stitch of 31:
+TileConfiguration.joint_ref.txt / joint_IF.txt; with --tile_transform_json every IF
+FOV is first resampled by the IF->ref similarity that 31 recorded. With
+--canvas_config joint_ref.txt the IF mosaics get the refDAPI mosaic's origin and size,
+so all channels and the reads share one pixel grid (IF outside it is cropped).
 
-This skips EdgeAligner and reuses DAPI-derived coordinates for other IF
-channels, for example DAPI -> 488-CD144/561-CA9/647-CD31.
+Optional flat-field correction (--flat_field): every FOV is divided by a smooth
+illumination profile (mean 1) in raw sensor orientation, before rotate90 and the
+IF tile transform, and converted back to its integer dtype. 'auto' estimates the
+profile from the FOVs of this run (mean of the MIPs, Gaussian smoothing); a file
+(.tif/.npy, tile-sized) supplies a profile estimated beforehand, e.g. pooled over
+many samples.
+
+Tiles come from --input_dir (<dir>/<config filename>) or straight from a raw round
+(--raw_round_dir 01_data/IF --raw_channel ch01: PositionXXX/*ch01*.tif).
 """
 
 import argparse
@@ -14,11 +25,23 @@ import sys
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="Direct Ashlar mosaic from TileConfiguration.registered.txt"
+        description="Ashlar mosaic at the positions of a joint TileConfiguration (31)"
     )
-    parser.add_argument("--input_dir", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--input_dir", help="Per-FOV images named as in the config")
+    source.add_argument(
+        "--raw_round_dir",
+        help="Raw round (PositionXXX/*<raw_channel>*.tif), read in place",
+    )
     parser.add_argument(
-        "--config_file", required=True, help="Path to TileConfiguration.registered.txt"
+        "--raw_channel",
+        default=None,
+        help="File token of the channel in --raw_round_dir, e.g. ch01",
+    )
+    parser.add_argument(
+        "--config_file",
+        required=True,
+        help="Path to the TileConfiguration, e.g. TileConfiguration.joint_IF.txt",
     )
     parser.add_argument(
         "--output_image_prefix",
@@ -59,6 +82,23 @@ def build_parser():
             "FOV is resampled by it (use for IF channels with TileConfiguration.joint_IF.txt)."
         ),
     )
+    parser.add_argument(
+        "--canvas_config",
+        default=None,
+        help="TileConfiguration whose FOVs set the mosaic's origin and size (default: --config_file), "
+        "e.g. TileConfiguration.joint_ref.txt for the IF channels.",
+    )
+    parser.add_argument(
+        "--flat_field",
+        default="none",
+        help="'none' (default), 'auto' (estimate from this run's FOVs) or a .tif/.npy illumination profile.",
+    )
+    parser.add_argument(
+        "--flat_field_sigma",
+        type=float,
+        default=64.0,
+        help="Gaussian smoothing (px) of the flat field estimated with --flat_field auto.",
+    )
     return parser
 
 
@@ -67,8 +107,26 @@ if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
 
 import numpy as np
 import skimage.io
-from ashlar import reg
+from ashlar import reg, utils
 from ashlar.reg import Mosaic, PyramidWriter
+
+_ashlar_blend = utils.pastefunc_blend
+
+
+def _blend_rounded(target, img):
+    """ashlar's linear blend, rounded for integer mosaics.
+
+    ashlar writes the float blend back into the integer mosaic, which truncates
+    every blended (overlap) pixel by 0.5 count on average: a few percent darker
+    seams in dim uint8 channels. Rounding removes that bias.
+    """
+    out = _ashlar_blend(target, img)
+    return np.rint(out) if np.issubdtype(target.dtype, np.integer) else out
+
+
+utils.pastefunc_blend = (
+    _blend_rounded  # Mosaic.assemble_channel looks it up at call time
+)
 
 
 def parse_slice_indices(spec):
@@ -86,14 +144,7 @@ def parse_slice_indices(spec):
     return indices
 
 
-def load_tile_transform(path):
-    """IF FOV resampling function from a joint-stitching summary json, or None."""
-    if not path:
-        return None
-    with open(path) as f:
-        tf = json.load(f).get("if_tile_transform")
-    if tf is None:
-        return None
+def joint_module():
     spec = importlib.util.spec_from_file_location(
         "joint_rounds",
         os.path.join(
@@ -102,8 +153,65 @@ def load_tile_transform(path):
     )
     joint = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(joint)
+    return joint
+
+
+def load_tile_transform(path):
+    """IF FOV resampling function from a joint-stitching summary json, or None."""
+    if not path:
+        return None
+    with open(path) as f:
+        tf = json.load(f).get("if_tile_transform")
+    if tf is None:
+        return None
+    joint = joint_module()
     a = complex(*tf["complex_a"])
     return lambda img: joint.resample_tile(img, a)
+
+
+def load_or_estimate_flat_field(spec, input_dir, config_file, sigma, files=None):
+    """Illumination profile (float32, mean 1) in raw FOV orientation, or None."""
+    if spec is None or spec.lower() == "none":
+        return None
+    if spec.lower() == "auto":
+        import scipy.ndimage
+
+        reader = TiffDirectReader(input_dir, config_file, mode="mip", files=files)
+        acc = None
+        for i in range(reader.metadata.num_images):
+            img = skimage.io.imread(reader.tile_path(reader.coords_data[i]["filename"]))
+            img = (np.max(img, axis=0) if img.ndim == 3 else img).astype(np.float64)
+            acc = img if acc is None else acc + img
+        ff = scipy.ndimage.gaussian_filter(acc / reader.metadata.num_images, sigma)
+        source = f"auto ({reader.metadata.num_images} FOVs, sigma {sigma:g} px)"
+    else:
+        ff = np.load(spec) if spec.endswith(".npy") else skimage.io.imread(spec)
+        source = spec
+    ff = np.asarray(ff, dtype=np.float32)
+    if ff.ndim != 2 or np.any(ff <= 0):
+        raise ValueError(f"Flat field must be a positive 2D image: {source}")
+    ff /= ff.mean()
+    h, w = ff.shape
+    c = ff[h // 2 - h // 8 : h // 2 + h // 8, w // 2 - w // 8 : w // 2 + w // 8].mean()
+    print(
+        f"[FlatField] {source}: shape {ff.shape}, corner/centre {ff[:h // 20, :w // 20].mean() / c:.3f}, min/max {ff.min():.3f}/{ff.max():.3f}"
+    )
+    return ff
+
+
+def apply_flat_field(image, ff):
+    """Divide by the flat field and return the original integer dtype (rounded, clipped)."""
+    if ff is None:
+        return image
+    if image.shape != ff.shape:
+        raise ValueError(
+            f"Flat field shape {ff.shape} does not match FOV shape {image.shape}"
+        )
+    out = image.astype(np.float32) / ff
+    if np.issubdtype(image.dtype, np.integer):
+        info = np.iinfo(image.dtype)
+        return np.clip(np.rint(out), info.min, info.max).astype(image.dtype)
+    return out.astype(image.dtype)
 
 
 def convert_dtype(image, output_format):
@@ -180,8 +288,12 @@ class TiffDirectReader(reg.PlateReader):
         slice_index=None,
         output_format="preserve",
         tile_transform=None,
+        flat_field=None,
+        files=None,
     ):
         self.path = directory
+        self.files = files
+        self.flat_field = flat_field
         self.mode = mode
         self.rotate90 = rotate90
         self.pixel_size_um = pixel_size_um
@@ -194,7 +306,7 @@ class TiffDirectReader(reg.PlateReader):
             print("Error: No coordinates found in config file!")
             sys.exit(1)
 
-        first_file = os.path.join(self.path, self.coords_data[0]["filename"])
+        first_file = self.tile_path(self.coords_data[0]["filename"])
         try:
             img = skimage.io.imread(first_file)
             print(f"[DirectReader] First file: {os.path.basename(first_file)}")
@@ -234,7 +346,13 @@ class TiffDirectReader(reg.PlateReader):
             print(f"Error reading first image {first_file}: {e}")
             sys.exit(1)
 
-    def _parse_config(self, config_file, channel_from, channel_to):
+    def tile_path(self, fname):
+        if self.files is not None:
+            return self.files[fname]
+        return os.path.join(self.path, fname)
+
+    @staticmethod
+    def _parse_config(config_file, channel_from, channel_to):
         data = []
         with open(config_file, "r") as f:
             for line in f:
@@ -279,6 +397,7 @@ class TiffDirectReader(reg.PlateReader):
         return img_2d
 
     def _finalize_image(self, image):
+        image = apply_flat_field(image, self.flat_field)
         image = self._apply_rotate90(image)
         if self.tile_transform is not None:
             image = self.tile_transform(image)
@@ -286,7 +405,7 @@ class TiffDirectReader(reg.PlateReader):
 
     def read(self, series, c):
         fname = self.coords_data[series]["filename"]
-        full_path = os.path.join(self.path, fname)
+        full_path = self.tile_path(fname)
         img = skimage.io.imread(full_path)
 
         if self.mode == "mip":
@@ -311,18 +430,20 @@ class TiffDirectReader(reg.PlateReader):
 
 
 class DirectAligner:
-    """Minimal aligner interface required by ashlar.reg.Mosaic."""
+    """Minimal aligner interface required by ashlar.reg.Mosaic. canvas: (y, x) FOV positions
+    that set the mosaic's origin and size (default: the reader's own)."""
 
-    def __init__(self, reader):
+    def __init__(self, reader, canvas=None):
         self.reader = reader
         self.metadata = reader.metadata
-        self.origin = self.metadata.positions.min(axis=0)
+        self.canvas = self.metadata.positions if canvas is None else canvas
+        self.origin = self.canvas.min(axis=0)
         self.positions = self.metadata.positions - self.origin
         self.centers = self.positions + self.metadata.size / 2
 
     @property
     def mosaic_shape(self):
-        upper = self.positions + self.metadata.size
+        upper = self.canvas - self.origin + self.metadata.size
         return tuple(np.ceil(upper.max(axis=0)).astype(int))
 
 
@@ -347,10 +468,37 @@ def main():
     print(
         f"IF tile transform: {'applied from ' + args.tile_transform_json if tile_transform else 'none'}"
     )
+    canvas = None
+    if args.canvas_config:
+        canvas = np.array(
+            [
+                [d["y"], d["x"]]
+                for d in TiffDirectReader._parse_config(args.canvas_config, None, None)
+            ]
+        )
+        print(f"Canvas: {args.canvas_config} ({len(canvas)} FOVs)")
+    files = None
+    if args.raw_round_dir:
+        if not args.raw_channel:
+            raise SystemExit("--raw_round_dir needs --raw_channel")
+        files = joint_module().raw_tile_files(args.raw_round_dir, args.raw_channel)
+        print(
+            f"Raw input: {args.raw_round_dir} (*{args.raw_channel}*, {len(files)} positions)"
+        )
+    input_dir = args.input_dir or args.raw_round_dir
+    flat_field = load_or_estimate_flat_field(
+        args.flat_field, input_dir, args.config_file, args.flat_field_sigma, files
+    )
+    if flat_field is not None:
+        skimage.io.imsave(
+            f"{args.output_image_prefix}_flatfield.tif",
+            flat_field,
+            check_contrast=False,
+        )
 
     print("\n=== Phase 1: Writing 2D MIP Mosaic (Direct, no alignment) ===")
     reader_2d = TiffDirectReader(
-        args.input_dir,
+        input_dir,
         args.config_file,
         channel_from=args.channel_from,
         channel_to=args.channel_to,
@@ -359,8 +507,10 @@ def main():
         pixel_size_um=args.pixel_size_um,
         output_format=args.output_format,
         tile_transform=tile_transform,
+        flat_field=flat_field,
+        files=files,
     )
-    aligner_2d = DirectAligner(reader_2d)
+    aligner_2d = DirectAligner(reader_2d, canvas)
 
     mosaic_2d = Mosaic(aligner=aligner_2d, shape=aligner_2d.mosaic_shape, verbose=True)
     writer_2d = PyramidWriter(
@@ -373,7 +523,7 @@ def main():
         path_slice = f"{args.output_image_prefix}_z{slice_index:03d}_2d.ome.tif"
         print(f"\n=== Phase 2: Writing Z-slice {slice_index} Mosaic ===")
         reader_slice = TiffDirectReader(
-            args.input_dir,
+            input_dir,
             args.config_file,
             channel_from=args.channel_from,
             channel_to=args.channel_to,
@@ -383,8 +533,10 @@ def main():
             slice_index=slice_index,
             output_format=args.output_format,
             tile_transform=tile_transform,
+            flat_field=flat_field,
+            files=files,
         )
-        aligner_slice = DirectAligner(reader_slice)
+        aligner_slice = DirectAligner(reader_slice, canvas)
 
         mosaic_slice = Mosaic(
             aligner=aligner_slice, shape=aligner_slice.mosaic_shape, verbose=True
@@ -402,7 +554,7 @@ def main():
     if do_make_3d:
         print("\n=== Phase 3: Writing 3D Stack Mosaic ===")
         reader_3d = TiffDirectReader(
-            args.input_dir,
+            input_dir,
             args.config_file,
             channel_from=args.channel_from,
             channel_to=args.channel_to,
@@ -411,8 +563,10 @@ def main():
             pixel_size_um=args.pixel_size_um,
             output_format=args.output_format,
             tile_transform=tile_transform,
+            flat_field=flat_field,
+            files=files,
         )
-        aligner_3d = DirectAligner(reader_3d)
+        aligner_3d = DirectAligner(reader_3d, canvas)
 
         mosaic_3d = Mosaic(
             aligner=aligner_3d, shape=aligner_3d.mosaic_shape, verbose=True

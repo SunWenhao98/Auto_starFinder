@@ -42,6 +42,7 @@ class StepSpec:
     log_root_key: str = "decode_log"
     script_dir_from_wrapper: bool = False
     sample_position_offset_flag: str | None = None
+    maf_offset_key: str | None = None  # default: <prefix>_maf_offset
 
 
 COMMON_ARGS: ArgMap = (
@@ -81,10 +82,10 @@ COUNT_MATRIX_ARGS: ArgMap = CONDA_SH_ARG + (
 STEP_ORDER = (
     "gr", "lr_subtile", "lr_fov", "ls", "gspf", "grd", "egc", "atlas", "pairwise",
     "dapi_cp", "clumap", "rna_restore", "nuclei_reg", "prepare_layout",
-    "prepare_tile_config", "fiji_stitch_initial", "ashlar_stitch_initial",
+    "prepare_tile_config", "fiji_stitch_initial", "ashlar_stitch_initial", "ashlar_mst_stitch",
     "prepare_moveimages", "fiji_stitch_mosaic", "ashlar_stitch_mosaic",
     "pyreg", "matreg", "reg_compare", "transform_apply",
-    "ashlar_mst_stitch", "ashlar_joint_stitch", "ashlar_joint_mosaic",
+    "ashlar_joint_stitch", "ashlar_joint_mosaic",
     "cellreads_integration", "csv_to_count_matrix",
 )
 STEP_SPECS = {
@@ -423,7 +424,6 @@ STEP_SPECS = {
         log_root_key="stitch_log",
         script_dir_from_wrapper=True,
     ),
-    # 3x: joint ref + IF stitching path (MST/LSQ ashlar, unified coordinate frame)
     "ashlar_mst_stitch": StepSpec(
         "run_ashlar_mst_stitch", "script_ashlar_mst_stitch",
         "ashlar_mst_stitch", "single", "ashlar_mst_stitch",
@@ -452,9 +452,17 @@ STEP_SPECS = {
         "ashlar_joint_stitch", "single", "ashlar_joint_stitch",
         "logs031_ashlar_joint_stitch", CONDA_SH_ARG + COMMON_ARGS + (
             ("ashlar_joint_stitch_stitching_workdir", "--stitching_workdir"),
-            ("ashlar_joint_stitch_ref_channel_dir", "--ref_channel_dir"),
-            ("ashlar_joint_stitch_if_channel_dir", "--if_channel_dir"),
-            ("ashlar_joint_stitch_input_config", "--input_config"),
+            ("ref_round", "--ref_round"),
+            ("ashlar_joint_stitch_if_round", "--if_round"),
+            ("ashlar_joint_stitch_ref_channel_token", "--ref_channel_token"),
+            ("ashlar_joint_stitch_if_channel_token", "--if_channel_token"),
+            ("prepare_tile_config_output_config", "--output_config"),
+            ("prepare_tile_config_maf_file", "--maf_file"),
+            ("prepare_tile_config_pixel_size_um", "--pixel_size_um"),
+            ("prepare_tile_config_image_xy", "--image_xy"),
+            ("prepare_tile_config_overlap_ratio", "--overlap_ratio"),
+            ("prepare_tile_config_invert_y", "--invert_y"),
+            ("prepare_tile_config_microscope", "--microscope"),
             ("ashlar_joint_stitch_output_ref_config", "--output_ref_config"),
             ("ashlar_joint_stitch_output_if_config", "--output_if_config"),
             ("ashlar_joint_stitch_output_prefix", "--output_prefix"),
@@ -465,6 +473,8 @@ STEP_SPECS = {
         ),
         log_root_key="stitch_log",
         script_dir_from_wrapper=True,
+        sample_position_offset_flag="--position_offset",
+        maf_offset_key="prepare_tile_config_maf_offset",  # same MAF as 12
     ),
     "ashlar_joint_mosaic": StepSpec(
         "run_ashlar_joint_mosaic", "script_ashlar_joint_mosaic",
@@ -473,7 +483,9 @@ STEP_SPECS = {
             ("ashlar_joint_mosaic_stitching_workdir", "--stitching_workdir"),
             ("ashlar_joint_mosaic_channel_mode", "--channel_mode"),
             ("ashlar_joint_mosaic_input_config", "--input_config"),
-            ("ashlar_joint_mosaic_channel_dir_prefix", "--channel_dir_prefix"),
+            ("ashlar_joint_mosaic_if_round", "--if_round"),
+            ("ref_round", "--ref_round"),
+            ("ashlar_joint_mosaic_ref_channel_token", "--ref_channel_token"),
             ("ashlar_joint_mosaic_stitch_result_dirname", "--stitch_result_dirname"),
             ("ashlar_joint_mosaic_output_prefix", "--output_prefix"),
             ("ashlar_joint_mosaic_output_format", "--output_format"),
@@ -482,8 +494,8 @@ STEP_SPECS = {
             ("ashlar_joint_mosaic_pixel_size_um", "--pixel_size_um"),
             ("ashlar_joint_mosaic_slice_indices", "--slice_indices"),
             ("ashlar_joint_mosaic_tile_transform_json", "--tile_transform_json"),
-            ("ashlar_joint_mosaic_ref_channel_dir", "--ref_channel_dir"),
             ("ashlar_joint_mosaic_ref_input_config", "--ref_input_config"),
+            ("ashlar_joint_mosaic_flat_field", "--flat_field"),
         ),
         log_root_key="stitch_log",
         script_dir_from_wrapper=True,
@@ -940,14 +952,15 @@ def _base_command(
     for config_key, wrapper_flag in spec.args:
         command.extend((wrapper_flag, section[config_key]))
     if spec.sample_position_offset_flag is not None:
-        raw_offset = section[f"{spec.prefix}_maf_offset"].strip()
+        offset_key = spec.maf_offset_key or f"{spec.prefix}_maf_offset"
+        raw_offset = section[offset_key].strip()
         if raw_offset == "auto":
             position_offset = sample.position_offset
         elif raw_offset.isascii() and raw_offset.isdecimal():
             position_offset = int(raw_offset)
         else:
             raise ValueError(
-                f"{section.name}.{spec.prefix}_maf_offset must be auto or a non-negative integer"
+                f"{section.name}.{offset_key} must be auto or a non-negative integer"
             )
         command.extend((spec.sample_position_offset_flag, str(position_offset)))
     return command

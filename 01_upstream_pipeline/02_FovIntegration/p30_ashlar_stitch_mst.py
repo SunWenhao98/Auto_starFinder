@@ -32,7 +32,11 @@ def parse_slice_indices(spec):
 
 
 class TiffTxtReader(reg.PlateReader):
-    """Reader for TileConfiguration-style coordinates and per-tile TIFF files."""
+    """Reader for TileConfiguration-style coordinates and per-tile TIFF files.
+
+    Tiles are read from <directory>/<config filename>, or from files[filename]
+    when a mapping is given (e.g. raw stacks of a round, see p31 raw_tile_files).
+    """
 
     def __init__(
         self,
@@ -42,8 +46,10 @@ class TiffTxtReader(reg.PlateReader):
         rotate90=False,
         pixel_size_um=1.0,
         slice_index=None,
+        files=None,
     ):
         self.path = directory
+        self.files = files
         self.mode = mode  # "mip", "stack", or "slice" for selected 1-based z-slice.
         self.rotate90 = rotate90
         self.pixel_size_um = pixel_size_um
@@ -54,7 +60,7 @@ class TiffTxtReader(reg.PlateReader):
             print("Error: No coordinates found in config file!")
             sys.exit(1)
 
-        first_file = os.path.join(self.path, self.coords_data[0]["filename"])
+        first_file = self.tile_path(self.coords_data[0]["filename"])
         try:
             img = skimage.io.imread(first_file)
             print(f"[Init] Detecting info from: {os.path.basename(first_file)}")
@@ -92,6 +98,11 @@ class TiffTxtReader(reg.PlateReader):
         except Exception as e:
             print(f"Error reading first image {first_file}: {e}")
             sys.exit(1)
+
+    def tile_path(self, fname):
+        if self.files is not None:
+            return self.files[fname]
+        return os.path.join(self.path, fname)
 
     def _parse_config(self, config_file):
         data = []
@@ -140,7 +151,7 @@ class TiffTxtReader(reg.PlateReader):
 
     def read(self, series, c):
         fname = self.coords_data[series]["filename"]
-        full_path = os.path.join(self.path, fname)
+        full_path = self.tile_path(fname)
         img = skimage.io.imread(full_path)
 
         if self.mode == "mip":

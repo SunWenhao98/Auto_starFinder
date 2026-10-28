@@ -33,9 +33,17 @@ def read_calls(path: Path) -> list[dict]:
 def wrapper_runtime(tmp_path: Path) -> tuple[Path, list[str], dict[str, str]]:
     project_root = tmp_path / "project root"
     work_dir = project_root / "sample" / "02_registration_contract" / "stitching"
-    for channel in ("refDAPI", "DAPI", "561-CA9", "488-CD144", "647-CD31"):
-        (work_dir / f"raw-{channel}").mkdir(parents=True)
-    for name in ("initial.txt", "joint_ref.txt", "joint_IF.txt", "joint_summary.json"):
+    (work_dir / "raw-refDAPI").mkdir(parents=True)
+    # 31/32 read the raw rounds in place
+    for round_dir in ("round001", "IF"):
+        (project_root / "sample" / "01_data" / round_dir).mkdir(parents=True)
+    for name in (
+        "initial.txt",
+        "joint_ref.txt",
+        "joint_IF.txt",
+        "joint_summary.json",
+        "positions.maf",
+    ):
         (work_dir / name).write_text("input\n", encoding="utf-8")
     script_dir = tmp_path / "runners"
     script_dir.mkdir()
@@ -63,7 +71,7 @@ def wrapper_runtime(tmp_path: Path) -> tuple[Path, list[str], dict[str, str]]:
         index = 0
         while index < len(argv):
             flag = argv[index]
-            if flag in ("--rotate90", "--rotate_positions"):
+            if flag in ("--rotate90", "--rotate_positions", "--invert_y"):
                 options[flag] = True
                 index += 1
             else:
@@ -74,6 +82,7 @@ def wrapper_runtime(tmp_path: Path) -> tuple[Path, list[str], dict[str, str]]:
         if runner.startswith("p31_"):
             output_dir = Path(options["--output_dir"])
             outputs = {
+                "nominal": output_dir / options["--config_name"],
                 "ref": output_dir / options["--ref_config_name"],
                 "if": output_dir / options["--if_config_name"],
                 "summary": output_dir / (options["--prefix"] + "_summary.json"),
@@ -155,12 +164,10 @@ def test_joint_wrappers_resolve_paths_and_channel_semantics(
             "true",
         ],
         "ashlar_joint_stitch": [
-            "--ref_channel_dir",
-            "raw-refDAPI",
-            "--if_channel_dir",
-            "raw-DAPI",
-            "--input_config",
-            "initial.txt",
+            "--maf_file",
+            str(work_dir / "positions.maf"),
+            "--output_config",
+            "nominal.txt",
             "--output_ref_config",
             "result_ref.txt",
             "--output_if_config",
@@ -175,8 +182,6 @@ def test_joint_wrappers_resolve_paths_and_channel_semantics(
             "LeicaIF",
             "--input_config",
             "joint_IF.txt",
-            "--ref_channel_dir",
-            "raw-refDAPI",
             "--ref_input_config",
             "joint_ref.txt",
             "--tile_transform_json",
@@ -190,6 +195,7 @@ def test_joint_wrappers_resolve_paths_and_channel_semantics(
     calls = read_calls(Path(environment["CAPTURE"]))
     assert {call["runner"] for call in calls} == {"p" + wrapper.replace(".sh", ".py")}
     options = calls[0]["options"]
+    data_dir = work_dir.parents[1] / "01_data"
     if stage == "ashlar_mst_stitch":
         assert options["--input_dir"] == str(work_dir / "raw-refDAPI")
         assert options["--config_file"] == str(work_dir / "initial.txt")
@@ -197,51 +203,62 @@ def test_joint_wrappers_resolve_paths_and_channel_semantics(
         assert options["--rotate90"] is True
         assert (work_dir / "stitching_results/mst_2d.ome.tif").is_file()
     elif stage == "ashlar_joint_stitch":
-        assert options["--ref_dir"] == str(work_dir / "raw-refDAPI")
-        assert options["--if_dir"] == str(work_dir / "raw-DAPI")
-        assert options["--config_file"] == str(work_dir / "initial.txt")
+        assert options["--ref_round_dir"] == str(data_dir / "round001")
+        assert options["--if_round_dir"] == str(data_dir / "IF")
+        assert (options["--ref_channel"], options["--if_channel"]) == ("ch03", "ch03")
+        assert options["--maf_file"] == str(work_dir / "positions.maf")
+        assert options["--config_name"] == "nominal.txt"
         assert options["--output_dir"] == str(work_dir)
         assert options["--rotate90"] is True
         assert all(
             (work_dir / name).stat().st_size
-            for name in ("result_ref.txt", "result_IF.txt", "joint_result_summary.json")
+            for name in (
+                "nominal.txt",
+                "result_ref.txt",
+                "result_IF.txt",
+                "joint_result_summary.json",
+            )
         )
     else:
-        assert [Path(call["options"]["--input_dir"]).name for call in calls] == [
-            "raw-refDAPI",
-            "raw-561-CA9",
-            "raw-488-CD144",
-            "raw-647-CD31",
-            "raw-DAPI",
+        # ref DAPI first, then IF channel i of LeicaIF = raw token ch0i of the IF round
+        assert [
+            (call["options"]["--raw_round_dir"], call["options"]["--raw_channel"])
+            for call in calls
+        ] == [
+            (str(data_dir / "round001"), "ch03"),
+            (str(data_dir / "IF"), "ch00"),
+            (str(data_dir / "IF"), "ch01"),
+            (str(data_dir / "IF"), "ch02"),
+            (str(data_dir / "IF"), "ch03"),
         ]
         assert options["--config_file"] == str(work_dir / "joint_ref.txt")
         assert "--tile_transform_json" not in options
+        assert "--canvas_config" not in options
         for call in calls[1:]:
             assert call["options"]["--config_file"] == str(work_dir / "joint_IF.txt")
             assert call["options"]["--tile_transform_json"] == str(
                 work_dir / "joint_summary.json"
             )
+            assert call["options"]["--canvas_config"] == str(work_dir / "joint_ref.txt")
         assert (
             len(list((work_dir / "stitching_results").glob("mosaic_*_2d.ome.tif"))) == 5
         )
 
 
-@pytest.mark.parametrize("missing", ("ref", "if", "summary"))
-def test_joint_stitch_requires_each_of_its_three_outputs(
+@pytest.mark.parametrize("missing", ("nominal", "ref", "if", "summary"))
+def test_joint_stitch_requires_each_of_its_four_outputs(
     missing: str, wrapper_runtime: tuple[Path, list[str], dict[str, str]]
 ) -> None:
-    _, common, environment = wrapper_runtime
+    work_dir, common, environment = wrapper_runtime
     environment["OMIT_OUTPUT"] = missing
     result = run_wrapper(
         "31_ashlar_stitch_joint.sh",
         common,
         [
-            "--ref_channel_dir",
-            "raw-refDAPI",
-            "--if_channel_dir",
-            "raw-DAPI",
-            "--input_config",
-            "initial.txt",
+            "--maf_file",
+            str(work_dir / "positions.maf"),
+            "--output_config",
+            "new_nominal.txt",
             "--output_ref_config",
             "new_ref.txt",
             "--output_if_config",
