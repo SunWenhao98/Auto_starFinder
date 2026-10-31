@@ -94,6 +94,7 @@
         allSpots_raw;
         allIntensity_raw;
         maxIntensity_raw;
+        extractionParameters; % Actual parameters used to build candidate evidence.
         
         % Reads
         allReads;
@@ -864,7 +865,7 @@
             % Defaults
             defaultvoxelSize = [3 3 1];
             defaultthreshold = 0.5;
-            defaultIntensityThresh_perRound = 270;
+            defaultIntensityThresh_perRound = 270; % Max channel neighborhood sum, required in every decoded round.
             defaultshowPlots = false;
             defaultinterm_outpath = '';
             defaultrefIndex = 1;
@@ -885,6 +886,9 @@
             
             fprintf('====Reads Extraction====\n');
             fprintf(sprintf('voxel size: %d x %d x %d\n', p.Results.voxelSize));
+            obj.extractionParameters = struct('quality_threshold', p.Results.q_score_thers, ...
+                'voxel_size', p.Results.voxelSize, 'decoding_rounds', p.Results.decoding_rounds, ...
+                'intensityThresh_PR', p.Results.IntensityThresh_perRound, 'ref_round', p.Results.ref_index);
             
             % [obj.allReads, obj.allSpots, obj.allScores, obj.basecsMat] = ExtractFromLocation( obj.registeredImages, obj.allSpots, ...
             %                                                                         p.Results.voxelSize, p.Results.q_score_thers, ...

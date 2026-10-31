@@ -88,14 +88,21 @@ POSITION_RE = re.compile(r"(?:选中的\s*Position\s*文件夹名称[:：]\s*|^P
 QC_RE = re.compile(r"([\d.]+) \[(\d+) / (\d+)\] percent of reads are below score thresh (?!.*of all valid spots).*")
 VALID_QC_RE = re.compile(r"([\d.]+) \[(\d+) / (\d+)\] percent of reads are below score thresh .* of all valid spots")
 INTENSITY_RE = re.compile(
-    r"([\d.]+) \[(\d+) / (\d+)\] percent of reads have intensity above [\d.eE+-]+ in Reference Round \(Round \d+\)"
+    # 保留原 IntensityQC 列；计数语义由源日志的参考轮/全轮条件决定。
+    r"([\d.]+) \[(\d+) / (\d+)\] percent of reads have intensity "
+    r"(?:above [\d.eE+-]+ in Reference Round \(Round \d+\)"
+    r"|at least [\d.eE+-]+ in all \d+ decoding rounds)"
 )
 SEQD_RE = re.compile(r"([\d.]+) \[(\d+) / \d+\] percent of reads match seqD barcode pattern")
 SEQF_RE = re.compile(r"([\d.]+) \[(\d+) / \d+\] percent of reads match seqF barcode pattern")
 SEQEND_RE = re.compile(r"([\d.]+) \[(\d+) / \d+\] percent of good reads match barcode pattern")
 STRICT_RE = re.compile(r"([\d.]+) \[(\d+) / \d+\] percent of good reads are in codebook")
 INTEGER_LINE_RE = re.compile(r"^\s*(\d+)\s*$")
-CROSSTALK_INLINE_RE = re.compile(r"Geting max color\.\.\.\s+(\d+)\s+Decoding\.\.\.")
+CROSSTALK_INLINE_RE = re.compile(
+    r"Geting max color\.\.\.\s+"
+    r"(?:PHASE_TIMING: score_calling_seconds=[\d.eE+-]+\s+)?"
+    r"(\d+)\s+Decoding\.\.\."
+)
 
 
 @dataclass
@@ -158,9 +165,10 @@ def parse_count_stat(pattern: str, text: str) -> tuple[float, int]:
 
 
 def parse_decoding(text: str, submit_directory: str) -> list[dict[str, str]]:
-    fov = search(r"选中的 Position 文件夹名称:\s*(Position\d+)", text, "")
-    if not fov:
+    position_match = POSITION_RE.search(text)
+    if not position_match:
         return []
+    fov = position_match.group(1)
     qc_prop, qc_num, qc_den = parse_stat(
         r"([\d\.]+) \[(\d+) / (\d+)\] percent of reads are below score thresh (?!.*of all valid spots).*",
         text,
@@ -170,7 +178,7 @@ def parse_decoding(text: str, submit_directory: str) -> list[dict[str, str]]:
         text,
     )
     intensity_prop, intensity_num, _ = parse_stat(
-        r"([\d\.]+) \[(\d+) / (\d+)\] percent of reads have intensity above [\d\.eE+-]+ in Reference Round \(Round \d+\)",
+        INTENSITY_RE.pattern,
         text,
     )
     seqd_prop, seqd_num = parse_count_stat(
@@ -185,7 +193,7 @@ def parse_decoding(text: str, submit_directory: str) -> list[dict[str, str]]:
     strict_prop, strict_num = parse_count_stat(
         r"([\d\.]+) \[(\d+) / \d+\] percent of good reads are in codebook", text
     )
-    crosstalk = int(search(r"Geting max color\.\.\.\s+(\d+)\s+Decoding\.\.\.", text, "0", re.MULTILINE))
+    crosstalk = int(search(CROSSTALK_INLINE_RE.pattern, text, "0"))
     return [{
         "submit_directory": submit_directory,
         "FOV_name": fov,

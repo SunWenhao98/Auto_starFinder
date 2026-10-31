@@ -69,7 +69,7 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
     defaultradius = 8;
     defaultGlobalRegistrationMode = 1;
     defaultLoadingMode = "local_registration";
-    defaultIntensityThresh_perRound = 270;  % intensity threshold per round for spot filtering
+    defaultIntensityThresh_perRound = 270;  % Every decoded round: max channel neighborhood sum.
     defaulterode = 1;
     defaulttransform = 1;
     defaultfsize = [5 5 3];
@@ -117,6 +117,7 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
     addParameter(p, 'fsigma', defaultfsigma);
     addParameter(p, 'decoding_rounds', defaultdecoding_rounds);
     is_switch = @(x) islogical(x) && isscalar(x);
+    addParameter(p, 'save_decode_evidence', false, is_switch);
     addParameter(p, 'preTIFF_out', false, is_switch);
     addParameter(p, 'alignTIFF_out', false, is_switch);
     addParameter(p, 'mergedTIFFout', false, is_switch);
@@ -511,6 +512,14 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
     % 2025-08-13: Global Reads extraction and filtration
     if strcmp(p.Results.mode,'global_reads_decoding')
 
+        if p.Results.save_decode_evidence
+            assert(strcmp(p.Results.barcode_mode, 'tri'), 'Decode evidence currently supports tri decoding.');
+            evidence_dir = fullfile(curr_out_path, sprintf('decode_evidence_%s_%g_%s_PR%g', ...
+                p.Results.spotfinding_method, p.Results.intensity_threshold, ...
+                p.Results.barcode_mode, p.Results.IntensityThresh_perRound));
+            assert(~isfolder(evidence_dir) && ~isfile(evidence_dir), ...
+                'Decode evidence output already exists: %s', evidence_dir);
+        end
         % initialize and create new_STARMapDataset_zf
         sdata_t = new_STARMapDataset_zf(input_path, output_path, 'useGPU', false);
         sdata_t.log = fopen(fullfile(curr_out_path_log, ...
@@ -523,12 +532,13 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
         % load local stitched image
         fprintf('Loading stitched image...\n');
         if strcmp(p.Results.loading_mode, 'local_registration')
-            load(fullfile(curr_out_path, 'localRegistered_image.mat'));
+            decoding_image_path = fullfile(curr_out_path, 'localRegistered_image.mat');
         elseif strcmp(p.Results.loading_mode, 'global_registration')
-            load(fullfile(curr_out_path, 'globalRegistered_image.mat'));
+            decoding_image_path = fullfile(curr_out_path, 'globalRegistered_image.mat');
         elseif strcmp(p.Results.loading_mode, 'raw_preprocessed')
-            load(fullfile(curr_out_path, strcat('rawPreprocessed_image.mat')));
+            decoding_image_path = fullfile(curr_out_path, 'rawPreprocessed_image.mat');
         end
+        load(decoding_image_path, 'full_image');
 
         sdata_t.registeredImages = full_image;
         full_image = [];
@@ -641,6 +651,22 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
         end
         
         disp('Reads filtration is done!')
+
+        if p.Results.save_decode_evidence
+            if strcmp(p.Results.spotfinding_method, 'SpotFlow')
+                evidence_spots_path = fullfile(curr_out_path, 'allSpots_spotiflow.csv');
+            else
+                evidence_spots_path = fullfile(curr_out_path, strcat('allSpots_', ...
+                    p.Results.spotfinding_method, '_', num2str(p.Results.intensity_threshold), '.csv'));
+            end
+            evidence_metadata = struct('sample', p.Results.sample, 'position', p.Results.tile, ...
+                'source_mat', decoding_image_path, 'source_allspots', evidence_spots_path, ...
+                'source_codebook', fullfile(input_path, 'genes_tri.csv'), ...
+                'barcode_mode', p.Results.barcode_mode, 'codeMap_mode', p.Results.codeMap_mode, ...
+                'spotfinding_method', p.Results.spotfinding_method, ...
+                'spotfinding_threshold', p.Results.intensity_threshold);
+            export_decode_evidence(sdata_t, evidence_dir, evidence_metadata);
+        end
 
 
         % save results .1: goodSpots = [x,y,z,Gene,(probability)]

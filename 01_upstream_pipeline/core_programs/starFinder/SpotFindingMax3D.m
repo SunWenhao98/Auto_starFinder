@@ -39,14 +39,14 @@ function locations = SpotFindingMax3D( input_img, ref_index, intensityThreshold 
         % chLabel = sprintf("ch%02d", c);
 
         % 2025-08-13: add intensity value to the output
-        for s = 1:size(curr_centroid, 1)
-            sx = curr_centroid(s, 1);
-            sy = curr_centroid(s, 2);
-            sz = curr_centroid(s, 3);
-            intensity = curr_channel(sy, sx, sz); 
-            locations = [locations; sx, sy ,sz, intensity, (intensityThreshold * 255), c];
-            % the setting of fifth column is for compatibility with spotiflow version;
-            % locations = [locations; {sx, sy, sz, intensity, (intensityThreshold * 255), chLabel}];
+        if ~isempty(curr_centroid)
+            centroid_count = size(curr_centroid, 1);
+            centroid_index = sub2ind(size(curr_channel), double(curr_centroid(:, 2)), ...
+                                      double(curr_centroid(:, 1)), double(curr_centroid(:, 3)));
+            intensity = curr_channel(centroid_index);
+            locations = [locations; curr_centroid, intensity(:), ...
+                         repmat(intensityThreshold * 255, centroid_count, 1), ...
+                         repmat(c, centroid_count, 1)];
         end
 
     end

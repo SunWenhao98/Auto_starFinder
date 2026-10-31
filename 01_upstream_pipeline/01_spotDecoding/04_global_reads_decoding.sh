@@ -12,6 +12,8 @@ set -euo pipefail
 
 print_usage() {
     echo "Usage: $0 --project_root PATH --project_name NAME --reg_dir_suffix SUFFIX [options]"
+    echo "  --intensityThresh_PR VALUE  Minimum max-channel neighborhood sum in every decoded round (default: 0)."
+    echo "  --save_decode_evidence true  Export tri candidate evidence for threshold studies (default: false)."
 }
 
 print_slurm_info() {
@@ -43,6 +45,7 @@ DECODING_MODE="normal"
 CODEMAP_MODE="Olympus"
 LOADING_MODE="local_registration"
 INTENSITY_THRESH_PR="0"
+SAVE_DECODE_EVIDENCE="false"
 VOXELSIZE="1,1,1"
 DECODING_ROUNDS="11"
 OFFSET="0"
@@ -64,6 +67,7 @@ while [[ $# -gt 0 ]]; do
         --codeMap_mode) CODEMAP_MODE="$2"; shift 2 ;;
         --loading_mode) LOADING_MODE="$2"; shift 2 ;;
         --intensityThresh_PR) INTENSITY_THRESH_PR="$2"; shift 2 ;;
+        --save_decode_evidence) SAVE_DECODE_EVIDENCE="$2"; shift 2 ;;
         --voxelsize) VOXELSIZE="$2"; shift 2 ;;
         --decoding_rounds) DECODING_ROUNDS="$2"; shift 2 ;;
         --offset) OFFSET="$2"; shift 2 ;;
@@ -170,6 +174,8 @@ echo "DECODING_MODE=${DECODING_MODE}"
 echo "CODEMAP_MODE=${CODEMAP_MODE}"
 echo "LOADING_MODE=${LOADING_MODE}"
 echo "INTENSITY_THRESH_PR=${INTENSITY_THRESH_PR}"
+echo "INTENSITY_FILTER=all_decoded_rounds_max_channel_neighborhood_sum"
+echo "SAVE_DECODE_EVIDENCE=${SAVE_DECODE_EVIDENCE}"
 echo "VOXELSIZE=${VOXELSIZE}"
 echo "DECODING_ROUNDS=${DECODING_ROUNDS}"
 echo "OFFSET=${OFFSET}"
@@ -178,7 +184,12 @@ echo "BARCODE_MODE=${BARCODE_MODE}"
 echo "SPLIT_LOC=${SPLIT_LOC}"
 echo "CORE_MATLAB_DIR=${CORE_MATLAB_DIR}"
 
+MATLAB_SAVE_DECODE_EVIDENCE=false
+if [[ "${SAVE_DECODE_EVIDENCE,,}" == "true" ]]; then
+    MATLAB_SAVE_DECODE_EVIDENCE=true
+fi
+
 module purge
 module load matlab/2023a
 
-matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'global_reads_decoding', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'spotfinding_method', '$SPOTFINDING_METHOD', 'voxel_size', $VOXEL_SIZE, 'end_bases', $END_BASES, 'barcode_mode', '$BARCODE_MODE', 'split_loc', $SPLIT_LOC, 'intensity_threshold', $INTENSITY_THRESHOLD, 'IntensityThresh_perRound', $INTENSITY_THRESH_PR, 'loading_mode', '$LOADING_MODE', 'codeMap_mode', '$CODEMAP_MODE', 'decoding_rounds', $DECODING_ROUNDS)"
+matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'global_reads_decoding', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'spotfinding_method', '$SPOTFINDING_METHOD', 'voxel_size', $VOXEL_SIZE, 'end_bases', $END_BASES, 'barcode_mode', '$BARCODE_MODE', 'split_loc', $SPLIT_LOC, 'intensity_threshold', $INTENSITY_THRESHOLD, 'IntensityThresh_perRound', $INTENSITY_THRESH_PR, 'loading_mode', '$LOADING_MODE', 'codeMap_mode', '$CODEMAP_MODE', 'decoding_rounds', $DECODING_ROUNDS, 'save_decode_evidence', $MATLAB_SAVE_DECODE_EVIDENCE)"

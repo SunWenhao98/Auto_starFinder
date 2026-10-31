@@ -8,39 +8,22 @@ function [bases, maxColors, baseScores] = new_GetBaseSeq( colorSeq )
     % determine maximal color for each round
     fprintf('Geting max color...\n');
 
-    count = 0;
-    for i=1:Npoint
-        multi_max = false;
-        for j=1:Nround
-            currMax = max(colorSeq(i,j,:), [], 3);
-            if ~isnan(currMax)
-                m = find(colorSeq(i,j,:) == currMax);
-%                 maxColors(i,j) = m(1);
-%                 baseScores(i,j) = -log(currMax);
-                if numel(m) ~= 1
-                    multi_max = true;
-                    %count = count + 1;
-                    maxColors(i,j) = -1;
-                    baseScores(i,j) = Inf;
-                else
-                    maxColors(i,j) = m(1);
-                    baseScores(i,j) = -log(currMax);
-                end
-            else
-                maxColors(i,j) = -1;
-                baseScores(i,j) = Inf;
-            end
-        end
-        
-        if multi_max
-            count = count + 1;        % 任何一轮存在两个或更多通道出现最大值，都会被标记为multi_max
-        end
-    end
+    score_calling_timer = tic;
+    [currMax, maxIndex] = max(colorSeq, [], 3);
+    maxCount = sum(colorSeq == currMax, 3);
+    is_nan = isnan(currMax);
+    unique_max = maxCount == 1 & ~is_nan;
+    maxColors(:) = -1;
+    baseScores(:) = Inf;
+    maxColors(unique_max) = maxIndex(unique_max);
+    baseScores(unique_max) = -log(currMax(unique_max));
+    count = sum(any(maxCount ~= 1 & ~is_nan, 2));
+    fprintf('PHASE_TIMING: score_calling_seconds=%.2f\n', toc(score_calling_timer));
     fprintf('%d \n', count);
     
     
     % alexa decoding
-    bases = {Npoint, 1};
+    bases = cell(Npoint, 1);
     fprintf('Decoding...\n');
     % parfor i=1:Npoint
     %     if ~any(isinf(baseScores(i, :)))
@@ -49,10 +32,12 @@ function [bases, maxColors, baseScores] = new_GetBaseSeq( colorSeq )
     % end
     % fprintf('\n');
 
-    for i=1:Npoint
-        if ~any(isinf(baseScores(i, :)))
-            bases{i, 1} = Colorseq2Str(maxColors(i, :));
-        end
+    string_decoding_timer = tic;
+    valid_indices = find(~any(isinf(baseScores), 2));
+    for valid_index = 1:numel(valid_indices)
+        point_index = valid_indices(valid_index);
+        bases{point_index, 1} = Colorseq2Str(maxColors(point_index, :));
     end
+    fprintf('PHASE_TIMING: string_decoding_seconds=%.2f\n', toc(string_decoding_timer));
     fprintf('\n');
 

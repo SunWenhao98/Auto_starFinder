@@ -38,21 +38,21 @@ reg = abs(ifftn(reg*exp(1i*params.diffphase)));
 if params.shifts(1) > 0
     reg(1:ceil(params.shifts(1)),:,:) = 0;
 elseif params.shifts(1) < 0
-    reg(nr+floor(params.shifts(1)):nr,:,:) = 0;
+    reg(nr+floor(params.shifts(1))+1:nr,:,:) = 0;
 end
 
 % Y axis
 if params.shifts(2) > 0
     reg(:,1:ceil(params.shifts(2)),:) = 0;
 elseif params.shifts(2) < 0
-    reg(:,nc+floor(params.shifts(2)):nc,:) = 0;
+    reg(:,nc+floor(params.shifts(2))+1:nc,:) = 0;
 end
 
 % Z axis
 if params.shifts(3) > 0
     reg(:,:,1:ceil(params.shifts(3))) = 0;
 elseif params.shifts(3) < 0
-    reg(:,:,nz+floor(params.shifts(3)):nz) = 0;
+    reg(:,:,nz+floor(params.shifts(3))+1:nz) = 0;
 end
 
 end
