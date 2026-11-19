@@ -78,6 +78,8 @@ def wrapper_runtime(tmp_path: Path) -> tuple[Path, list[str], dict[str, str]]:
                 "if": output_dir / options["--if_config_name"],
                 "summary": output_dir / (options["--prefix"] + "_summary.json"),
             }
+            if "--seqe_dir" in options:
+                outputs["seqe"] = output_dir / options["--seqe_config_name"]
         else:
             outputs = {"image": Path(options["--output_image_prefix"] + "_2d.ome.tif")}
             if "--registered_config_file" in options:
@@ -215,7 +217,8 @@ def test_joint_wrappers_resolve_paths_and_channel_semantics(
             "raw-DAPI",
         ]
         assert options["--config_file"] == str(work_dir / "joint_ref.txt")
-        assert "--tile_transform_json" not in options
+        assert options["--round_name"] == "ref"
+        assert options["--tile_transform_json"] == str(work_dir / "joint_summary.json")
         for call in calls[1:]:
             assert call["options"]["--config_file"] == str(work_dir / "joint_IF.txt")
             assert call["options"]["--tile_transform_json"] == str(
@@ -255,8 +258,9 @@ def test_joint_stitch_requires_each_of_its_three_outputs(
     assert result.returncode != 0
 
 
+@pytest.mark.parametrize("three_round", (False, True))
 def test_generated_joint_chain_creates_logs_before_submission_and_keeps_dependencies(
-    tmp_path: Path,
+    tmp_path: Path, three_round: bool,
 ) -> None:
     parser = configparser.ConfigParser(interpolation=configparser.BasicInterpolation())
     parser.read(ROOT / "batch_config.upstream.ini")
@@ -269,6 +273,19 @@ def test_generated_joint_chain_creates_logs_before_submission_and_keeps_dependen
     defaults["samples"] = '{"sample": 1}'
     defaults["stitch_log"] = str(tmp_path / "stitch logs")
     defaults["fovIntegration"] = str(WRAPPER_DIR)
+    optional_values = {
+        "ashlar_joint_stitch_if_input_config": "IF/initial.txt",
+        "ashlar_joint_stitch_seqe_channel_dir": "seqE/raw-DAPI",
+        "ashlar_joint_stitch_seqe_input_config": "seqE/initial.txt",
+        "ashlar_joint_stitch_output_seqe_config": "joint_seqE.txt",
+        "ashlar_joint_mosaic_seqe_channel_dir_prefix": "seqE/raw-",
+        "ashlar_joint_mosaic_seqe_input_config": "joint_seqE.txt",
+    }
+    for key, value in optional_values.items():
+        if three_round:
+            defaults[key] = value
+        else:
+            defaults.pop(key, None)
     for stage, _ in STAGES:
         defaults[f"run_{stage}"] = "true"
     parser["JOB_TEST"] = {
@@ -358,3 +375,41 @@ def test_generated_joint_chain_creates_logs_before_submission_and_keeps_dependen
     assert {call["cwd"] for call in calls} == {
         str(tmp_path / "stitch logs/submitcontract")
     }
+    if three_round:
+        assert calls[1]["argv"][calls[1]["argv"].index("--seqe_input_config") + 1] == "seqE/initial.txt"
+        assert calls[2]["argv"][calls[2]["argv"].index("--seqe_channel_dir_prefix") + 1] == "seqE/raw-"
+    else:
+        assert "--seqe_channel_dir" not in calls[1]["argv"]
+
+
+def test_three_round_wrappers_keep_independent_inputs_and_nine_outputs(wrapper_runtime):
+    work_dir, common, environment = wrapper_runtime
+    result = run_wrapper(
+        "31_ashlar_stitch_joint.sh", common,
+        ["--ref_channel_dir", "ref/raw-refDAPI", "--if_channel_dir", "IF/raw-DAPI",
+         "--input_config", "ref/initial.txt", "--if_input_config", "IF/initial.txt",
+         "--seqe_channel_dir", "seqE/raw-DAPI", "--seqe_input_config", "seqE/initial.txt"],
+        environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    options = read_calls(Path(environment["CAPTURE"]))[0]["options"]
+    assert options["--if_config_file"] == str(work_dir / "IF/initial.txt")
+    assert options["--seqe_dir"] == str(work_dir / "seqE/raw-DAPI")
+    assert options["--seqe_config_file"] == str(work_dir / "seqE/initial.txt")
+    assert (work_dir / "TileConfiguration.joint_seqE.txt").is_file()
+    result = run_wrapper(
+        "32_ashlar_stitch_mosaic_joint.sh", common,
+        ["--channel_mode", "LeicaIF", "--input_config", "TileConfiguration.joint_IF.txt",
+         "--channel_dir_prefix", "IF/raw-", "--ref_channel_dir", "ref/raw-refDAPI",
+         "--ref_input_config", "TileConfiguration.joint_ref.txt",
+         "--seqe_channel_dir_prefix", "seqE/raw-", "--tile_transform_json", "joint_ref-IF_summary.json"],
+        environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = read_calls(Path(environment["CAPTURE"]))[1:]
+    assert [c["options"]["--round_name"] for c in calls] == ["ref"] + ["IF"] * 4 + ["seqE"] * 4
+    prefixes = [c["options"]["--output_image_prefix"] for c in calls]
+    assert len(set(prefixes)) == 9
+    assert all(Path(p + "_2d.ome.tif").is_file() for p in prefixes)
+    assert all(c["options"]["--tile_transform_json"] == str(work_dir / "joint_ref-IF_summary.json") for c in calls)
+    assert all(c["options"]["--config_file"] == str(work_dir / "TileConfiguration.joint_seqE.txt") for c in calls[5:])

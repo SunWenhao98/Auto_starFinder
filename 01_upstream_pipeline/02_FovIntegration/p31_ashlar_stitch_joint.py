@@ -1,27 +1,13 @@
 #!/usr/bin/env python3
-"""Joint ashlar stitching of the reference round and the IF round in one frame.
+"""Joint ref/IF/optional seqE stitching with independent FOV lists.
 
-All ref and IF FOVs are treated as tiles of a single mosaic. After a coarse
-global offset puts every IF FOV on top of the ref FOVs it images, the neighbor
-graph contains ref-ref, IF-IF and cross-round (ref-IF) edges, and the
-MSTEdgeAligner of p30_ashlar_stitch_mst.py (edge registration, consistency
-check, loop rescue, global LSQ) solves all positions at once. The two output
-TileConfigurations share one coordinate frame, so ref and IF coordinates
-correspond exactly: the IF->ref offset of FOV k is pos_IF[k] - pos_ref[k]
-(written per FOV to <prefix>_if_fov_shifts.csv).
-
-Inputs are only the nominal (stage) TileConfiguration and the per-FOV ref/IF
-images. The coarse offset comes from low-resolution mosaics at nominal
-positions; it is only used to find cross-round neighbors.
-
-The IF round's global rotation/scale relative to the ref round is fitted from
-the cross-round edges of a first pass, against single-round positions solved
-from that pass's own ref-ref and IF-IF edges. If the rotation exceeds
---rotation_threshold_mdeg, IF FOVs are resampled about their centres by that
-similarity transform and the joint solve is repeated until the estimate is
-stable. Translation-only tile placement cannot represent a rotation: a small one
-is spread over every seam, a large one (e.g. a remounted slide, >1 deg) makes
-cross-round matching fail altogether.
+Each round keeps its own nominal coordinates and filenames. Overlapping FOVs
+from all rounds enter one MST/LSQ problem; no intersection of FOV lists is taken.
+The moving rounds' similarities to ref are estimated independently from measured
+cross-round edges and unrotated within-round positions. A round whose rotation
+exceeds the threshold is resampled about each tile centre before all rounds are
+solved together again. Tile configurations and the summary describe one shared
+canvas, including moving FOVs without a same-name reference FOV.
 """
 
 import argparse
@@ -29,6 +15,7 @@ import importlib.util
 import json
 import os
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 import scipy.ndimage
@@ -73,32 +60,43 @@ def resample_tile(img, a):
 
 
 class JointReader(reg.PlateReader):
-    """Ref tiles 0..N-1 followed by IF tiles N..2N-1 (IF placed at nominal + offset).
+    """Concatenate ref, IF and optional seqE without changing their FOV lists."""
 
-    IF tiles are optionally resampled by the similarity `if_transform` (complex
-    a, z -> a*z about the tile centre). Raw tiles are cached across passes.
-    """
-
-    def __init__(self, ref_reader, if_reader, if_offset, if_transform=None, cache=None):
-        self.ref, self.moving = ref_reader, if_reader
-        self.if_transform = if_transform
+    def __init__(self, readers, offsets=None, transforms=None, cache=None):
+        self.readers = readers
+        self.rounds = [name for name in ("ref", "IF", "seqE") if name in readers]
+        self.transforms = {} if transforms is None else transforms
         self._raw = {} if cache is None else cache
-        self.n = ref_reader.metadata.num_images
-        if if_reader.metadata.num_images != self.n:
-            raise ValueError("ref and IF configs must list the same FOVs")
+        offsets = {} if offsets is None else offsets
+        self.slices = {}
+        first = 0
+        for name in self.rounds:
+            count = readers[name].metadata.num_images
+            self.slices[name] = slice(first, first + count)
+            first += count
+        self.node_round = np.concatenate(
+            [np.repeat(name, readers[name].metadata.num_images) for name in self.rounds]
+        )
+        self.node_index = np.concatenate(
+            [np.arange(readers[name].metadata.num_images) for name in self.rounds]
+        )
 
         class Meta:
             pass
 
         m = Meta()
-        rm, im = ref_reader.metadata, if_reader.metadata
-        m.num_images = 2 * self.n
+        rm = readers["ref"].metadata
+        m.num_images = first
         m.num_channels = 1
         m.pixel_size = rm.pixel_size
-        m.positions = np.vstack([rm.positions, im.positions + if_offset])
+        m.positions = np.vstack(
+            [readers[name].metadata.positions + offsets.get(name, 0) for name in self.rounds]
+        )
         m.size = rm.size
-        m.filename = [f"ref/{f}" for f in rm.filename] + [
-            f"IF/{f}" for f in im.filename
+        m.filename = [
+            f"{name}/{filename}"
+            for name in self.rounds
+            for filename in readers[name].metadata.filename
         ]
         m.origin = m.positions.min(axis=0)
         m.pixel_dtype = rm.pixel_dtype
@@ -109,34 +107,46 @@ class JointReader(reg.PlateReader):
         return self._meta
 
     def read(self, series, c):
+        name = self.node_round[series]
         if series not in self._raw:
-            src = (
-                self.ref.read(series, c)
-                if series < self.n
-                else self.moving.read(series - self.n, c)
-            )
-            self._raw[series] = src
+            self._raw[series] = self.readers[name].read(self.node_index[series], c)
         img = self._raw[series]
-        if series >= self.n and self.if_transform is not None:
-            img = resample_tile(img, self.if_transform)
+        transform = self.transforms.get(name)
+        if transform is not None:
+            img = resample_tile(img, transform)
         return img
 
 
-def coarse_nominal_offset(reader, positions, scale=COARSE_SCALE):
-    """Translation D (full-res px, y/x) of the IF round relative to the ref round.
+class JointEdgeAligner(st.MSTEdgeAligner):
+    """Use rectangle overlap, including coincident FOVs from different rounds."""
 
-    Both rounds are laid out at the same nominal positions in low-resolution
-    mosaics; ref_mosaic(u + D) ~ if_mosaic(u).
-    """
-    n = reader.n
+    @property
+    def neighbors_graph(self):
+        if not hasattr(self, "_neighbors_graph"):
+            positions = self.metadata.positions
+            graph = nx.Graph()
+            graph.add_nodes_from(range(self.metadata.num_images))
+            for i in range(len(positions)):
+                overlap = self.metadata.size - np.abs(positions[i + 1 :] - positions[i])
+                neighbors = np.flatnonzero(np.all(overlap > 0, axis=1)) + i + 1
+                graph.add_edges_from((i, int(j)) for j in neighbors)
+            self._neighbors_graph = graph
+        return self._neighbors_graph
+
+
+def coarse_nominal_offset(reader, scale=COARSE_SCALE):
+    """Moving-to-ref translations from independent layouts on a common coarse canvas."""
     size = (np.array(reader.metadata.size) // scale).astype(int)
+    positions = reader.metadata.positions
     pos = np.round((positions - positions.min(axis=0)) / scale).astype(int)
     shape = pos.max(axis=0) + size
-    mosaics = []
-    for first in (0, n):
+    mosaics = {}
+    masks = {}
+    for name, section in reader.slices.items():
         m = np.zeros(shape, np.float32)
-        for k in range(n):
-            img = reader.read(first + k, 0).astype(np.float32)
+        valid = np.zeros(shape, bool)
+        for k in range(section.start, section.stop):
+            img = reader.read(k, 0).astype(np.float32)
             small = (
                 img[: size[0] * scale, : size[1] * scale]
                 .reshape(size[0], scale, size[1], scale)
@@ -144,52 +154,70 @@ def coarse_nominal_offset(reader, positions, scale=COARSE_SCALE):
             )
             y, x = pos[k]
             m[y : y + size[0], x : x + size[1]] = small
-        mosaics.append(scipy.ndimage.gaussian_filter(m, 1.5))
-    pad = 2 * shape  # pad so the FFT does not wrap
-    pa, pb = np.zeros(pad, np.float32), np.zeros(pad, np.float32)
-    pa[: shape[0], : shape[1]], pb[: shape[0], : shape[1]] = mosaics
-    shift, _, _ = skimage.registration.phase_cross_correlation(
-        pa, pb, normalization=None
-    )
-    shift = np.where(shift > pad / 2, shift - pad, shift)
-    return shift * scale
+            valid[y : y + size[0], x : x + size[1]] = True
+        # Missing FOVs are unobserved pixels, not dark signal. Normalize the
+        # smoothing at coverage boundaries and correlate only measured areas;
+        # otherwise differing bright footprints can dominate the coarse shift.
+        smoothed = scipy.ndimage.gaussian_filter(m, 1.5)
+        weight = scipy.ndimage.gaussian_filter(valid.astype(np.float32), 1.5)
+        np.divide(smoothed, weight, out=m, where=valid)
+        mosaics[name] = m
+        masks[name] = valid
+    offsets = {}
+    for name in reader.rounds[1:]:
+        shift, _, _ = skimage.registration.phase_cross_correlation(
+            mosaics["ref"], mosaics[name],
+            reference_mask=masks["ref"], moving_mask=masks[name],
+        )
+        offsets[name] = shift * scale
+    return offsets
 
 
-def single_round_positions(aligner, n):
-    """Ref and IF positions solved separately from the within-round edges of a pass."""
+def single_round_positions(aligner, sections):
+    """Solve each unrotated round using only its own edges from the first pass."""
     e = aligner.edge_table
     use = (e.inlier | (e.edge_source == "fallback")).to_numpy() & (
-        e.group != "ref|IF"
+        ~e.group.str.contains("|", regex=False)
     ).to_numpy()
     pos, _, _, _ = aligner.solve_lsq_positions(use)
-    return pos[:n], pos[n:]
+    return {name: pos[section] for name, section in sections.items()}
 
 
-def fit_if_similarity(edge_table, n, p_ref, q_if):
-    """Fit IF->ref similarity a, b (z_ref = a*z_if + b) from inlier cross-round edges.
-
-    Each cross edge (ref k, IF j) observes IF tile j in the ref frame at
-    p_ref[k] + measured relative position. p_ref / q_if must be single-round
-    positions of unrotated FOVs: joint positions are already pulled toward each
-    other and would underestimate the rotation.
-    """
+def fit_round_similarity(edge_table, name, sections, unrotated_positions):
+    """Fit moving-to-ref similarity from measured edges and fixed unrotated layouts."""
     e = edge_table
-    x = e[(e.group == "ref|IF") & e.inlier]
+    x = e[(e.group == f"ref|{name}") & e.inlier]
+    # A translation-only joint fit can reject correct edges before rotation is
+    # corrected. Refit their image measurements under the similarity model here.
+    if x.empty:
+        raise ValueError(f"{name}: no measured cross-round edges support a transform to ref")
     obs = (
-        p_ref[x.tile1.to_numpy()]
+        unrotated_positions["ref"][x.tile1.to_numpy() - sections["ref"].start]
         + x[["nominal_delta_y_px", "nominal_delta_x_px"]].to_numpy()
         + x[["shift_y_px", "shift_x_px"]].to_numpy()
     )
-    q = q_if[x.tile2.to_numpy() - n]
+    q = unrotated_positions[name][x.tile2.to_numpy() - sections[name].start]
     zq, zo = q[:, 1] + 1j * q[:, 0], obs[:, 1] + 1j * obs[:, 0]
     keep = np.ones(len(zq), dtype=bool)
-    for _ in range(3):
-        A = np.c_[zq[keep], np.ones(keep.sum())]
-        (a, b), *_ = np.linalg.lstsq(A, zo[keep], rcond=None)
+    for iteration in range(4):
+        # Empty or repeated-location matches otherwise give a zero/rank-deficient
+        # least-squares transform without raising a native NumPy error.
+        centre_q, centre_o = np.mean(zq[keep]), np.mean(zo[keep])
+        A = np.c_[zq[keep] - centre_q, np.ones(keep.sum())]
+        (a, intercept), _, rank, _ = np.linalg.lstsq(A, zo[keep] - centre_o, rcond=None)
+        if rank != 2 or not np.isfinite(a) or abs(a) == 0:
+            raise ValueError(f"{name}: cross-round measurements do not identify a finite similarity")
+        b = centre_o + intercept - a * centre_q
         r = np.abs(a * zq + b - zo)
+        if iteration == 3:
+            break
         mad = 1.4826 * np.median(np.abs(r[keep] - np.median(r[keep])))
-        keep = r <= np.median(r[keep]) + 4 * max(mad, 0.1)
+        next_keep = r <= np.median(r[keep]) + 4 * max(mad, 0.1)
+        if np.array_equal(next_keep, keep):
+            break
+        keep = next_keep
     return a, dict(
+        complex_a=[float(a.real), float(a.imag)],
         rotation_mdeg=float(np.degrees(np.angle(a)) * 1000),
         scale_ppm=float((abs(a) - 1) * 1e6),
         edges_used=int(keep.sum()),
@@ -197,18 +225,38 @@ def fit_if_similarity(edge_table, n, p_ref, q_if):
     )
 
 
+def check_round_support(aligner, node_round):
+    """Every moving component must reach ref without a guessed cross-round edge."""
+    e = aligner.edge_table
+    if e.empty:
+        raise ValueError("No overlapping measurements connect the imaging rounds")
+    active = e[e.lsq_active]
+    # Within-round fallback still keeps low-texture FOVs in their native layout;
+    # a fallback between rounds cannot establish their relative coordinate frame.
+    support = active[active.inlier | ~active.group.str.contains("|", regex=False)]
+    graph = nx.Graph()
+    graph.add_nodes_from(range(len(node_round)))
+    graph.add_edges_from(zip(support.tile1, support.tile2))
+    for component in nx.connected_components(graph):
+        rounds = set(node_round[list(component)])
+        if "ref" not in rounds:
+            raise ValueError(
+                f"{','.join(sorted(rounds))}: {len(component)} FOVs have no measured connection to ref"
+            )
+
+
 def write_tile_config(path, filenames, positions):
-    with open(path, "w") as f:
+    with open(path, "x") as f:
         f.write("# Define the number of dimensions we are working on\n")
         f.write("dim = 3\n\n")
         f.write("# Define the image coordinates\n")
         for fname, (y, x) in zip(filenames, positions):
-            f.write(f"{st.tileconfig_name(fname)}; ; ({x:.2f}, {y:.2f}, 0.0)\n")
+            f.write(f"{fname}; ; ({x:.2f}, {y:.2f}, 0.0)\n")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Joint ashlar stitching of the ref round and the IF round"
+        description="Joint ashlar stitching of ref, IF and optional seqE in one canvas"
     )
     parser.add_argument(
         "--ref_dir",
@@ -221,12 +269,19 @@ def main():
     parser.add_argument(
         "--config_file",
         required=True,
-        help="Nominal TileConfiguration (shared FOV list)",
+        help="Nominal TileConfiguration of the ref round",
     )
+    parser.add_argument(
+        "--if_config_file", default=None,
+        help="IF nominal coordinates/FOV list; defaults to --config_file for two-round compatibility",
+    )
+    parser.add_argument("--seqe_dir", default=None, help="Optional seqE DAPI tile directory")
+    parser.add_argument("--seqe_config_file", default=None, help="Independent seqE nominal coordinates/FOV list")
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--prefix", default="joint_ref-IF")
     parser.add_argument("--ref_config_name", default="TileConfiguration.joint_ref.txt")
     parser.add_argument("--if_config_name", default="TileConfiguration.joint_IF.txt")
+    parser.add_argument("--seqe_config_name", default="TileConfiguration.joint_seqE.txt")
     parser.add_argument("--max_shift_frac", type=float, default=0.05)
     parser.add_argument("--filter_sigma", type=float, default=3.0)
     parser.add_argument("--shift_outlier_sigma", type=float, default=5.0)
@@ -236,41 +291,73 @@ def main():
         "--rotation_threshold_mdeg",
         type=float,
         default=10.0,
-        help="Resample IF FOVs and re-solve when the fitted IF->ref rotation exceeds this (millidegrees).",
+        help="Resample each moving round when its fitted rotation to ref exceeds this (millidegrees).",
     )
     args = parser.parse_args()
-    os.makedirs(args.output_dir, exist_ok=True)
-    out = os.path.join(args.output_dir, args.prefix)
+    if args.seqe_dir is not None and args.seqe_config_file is None:
+        parser.error("--seqe_dir requires --seqe_config_file")
+    output_dir = os.path.abspath(args.output_dir)
+    out = os.path.join(output_dir, args.prefix)
+    inputs = {
+        "ref": (args.ref_dir, args.config_file),
+        "IF": (args.if_dir, args.if_config_file or args.config_file),
+    }
+    config_paths = {
+        "ref": os.path.join(output_dir, args.ref_config_name),
+        "IF": os.path.join(output_dir, args.if_config_name),
+    }
+    if args.seqe_dir is not None:
+        inputs["seqE"] = (args.seqe_dir, args.seqe_config_file)
+        config_paths["seqE"] = os.path.join(output_dir, args.seqe_config_name)
+    coordinate_paths = {name: f"{out}_{name.lower()}_coordinates.csv" for name in inputs}
+    shift_paths = {name: f"{out}_{name.lower()}_fov_shifts.csv" for name in inputs if name != "ref"}
+    outputs = list(config_paths.values()) + list(coordinate_paths.values()) + list(shift_paths.values()) + [
+        f"{out}_coordinates.csv", f"{out}_edge_alignment.csv",
+        f"{out}_pass1_edge_alignment.csv", f"{out}_summary.json",
+    ]
+    # Inputs and outputs may share a workdir, so protect these exact output paths.
+    destinations = [os.path.realpath(path) for path in outputs]
+    if len(set(destinations)) != len(destinations):
+        raise ValueError("Joint output paths collide")
+    for path in outputs:
+        if os.path.lexists(path):
+            raise FileExistsError(f"Refusing to overwrite joint output: {path}")
 
-    ref_reader = st.TiffTxtReader(
-        args.ref_dir, args.config_file, mode="mip", rotate90=args.rotate90
-    )
-    if_reader = st.TiffTxtReader(
-        args.if_dir, args.config_file, mode="mip", rotate90=args.rotate90
-    )
-    n = ref_reader.metadata.num_images
+    readers = {
+        name: st.TiffTxtReader(directory, config, mode="mip", rotate90=args.rotate90)
+        for name, (directory, config) in inputs.items()
+    }
+    for name, reader in readers.items():
+        filenames = reader.metadata.filename
+        if len(set(filenames)) != len(filenames):
+            raise ValueError(f"{name}: repeated FOV filenames cannot identify output tiles uniquely")
+        # Ashlar's pair registration uses one shared metadata.size for all tiles.
+        # A different round shape would otherwise silently use incorrect crops.
+        if not np.array_equal(reader.metadata.size, readers["ref"].metadata.size):
+            raise ValueError(f"{name}: tile XY dimensions differ from ref; joint Ashlar needs one tile size")
+
+    os.makedirs(output_dir, exist_ok=True)
     cache = {}
-
-    D = coarse_nominal_offset(
-        JointReader(ref_reader, if_reader, 0, cache=cache),
-        ref_reader.metadata.positions,
-    )
-    print(
-        f"[Joint] coarse IF offset vs ref (y, x) = ({D[0]:.1f}, {D[1]:.1f}) px (1/{COARSE_SCALE} nominal mosaics)"
-    )
-
-    max_shift_px = args.max_shift_frac * ref_reader.tile_size_val.astype(float)
-
-    def solve(if_transform):
-        reader = JointReader(
-            ref_reader, if_reader, D, if_transform=if_transform, cache=cache
+    layout = JointReader(readers, cache=cache)
+    offsets = coarse_nominal_offset(layout)
+    moving_rounds = layout.rounds[1:]
+    for name in moving_rounds:
+        offset = offsets[name]
+        print(
+            f"[Joint] {name}: {readers[name].metadata.num_images} FOVs, "
+            f"coarse offset vs ref (y, x) = ({offset[0]:.1f}, {offset[1]:.1f}) px"
         )
-        aligner = st.MSTEdgeAligner(
+
+    max_shift_px = args.max_shift_frac * readers["ref"].tile_size_val.astype(float)
+
+    def solve(transforms):
+        reader = JointReader(readers, offsets, transforms, cache)
+        aligner = JointEdgeAligner(
             reader,
             outlier_sigma=args.shift_outlier_sigma,
             position_solver="lsq",
             lsq_max_residual_px=args.lsq_max_residual_px,
-            tile_group=["ref"] * n + ["IF"] * n,
+            tile_group=reader.node_round,
             channel=0,
             max_shift=max_shift_px * reader.metadata.pixel_size,
             filter_sigma=args.filter_sigma,
@@ -278,74 +365,111 @@ def main():
             verbose=True,
         )
         aligner.run()
+        if aligner.edge_table.empty:
+            raise ValueError("No overlapping measurements connect the imaging rounds")
         return aligner
 
-    aligner = solve(None)
-    # Single-round positions of the unrotated FOVs, reused for every later fit.
-    P, Q = single_round_positions(aligner, n)
-    if_transform = None
-    a_new, rotation = fit_if_similarity(aligner.edge_table, n, P, Q)
-    print(
-        f"[Joint] IF->ref similarity: rotation {rotation['rotation_mdeg']:+.1f} mdeg, "
-        f"scale {rotation['scale_ppm']:+.0f} ppm ({rotation['edges_used']} cross edges, "
-        f"fit residual median {rotation['residual_median_px']:.2f} px)"
-    )
-    if abs(rotation["rotation_mdeg"]) > args.rotation_threshold_mdeg:
-        st.write_mst_edge_diagnostics(aligner, f"{out}_pass1_edge_alignment.csv")
-        # Cross matches improve once IF FOVs are rotated, which sharpens the
-        # estimate; iterate until the fitted rotation stops changing.
-        for _ in range(3):
-            if_transform = a_new
-            print("[Joint] re-solving with resampled IF FOVs")
-            aligner = solve(if_transform)
-            a_new, rotation = fit_if_similarity(aligner.edge_table, n, P, Q)
-            print(
-                f"[Joint] IF->ref similarity: rotation {rotation['rotation_mdeg']:+.1f} mdeg, "
-                f"scale {rotation['scale_ppm']:+.0f} ppm ({rotation['edges_used']} cross edges, "
-                f"fit residual median {rotation['residual_median_px']:.2f} px)"
+    transforms = {name: None for name in moving_rounds}
+    aligner = solve(transforms)
+    # Keep these unrotated within-round layouts fixed through all joint passes.
+    unrotated_positions = single_round_positions(aligner, layout.slices)
+    refinement_passes = 0
+    for iteration in range(4):
+        estimates = {}
+        updates = {}
+        for name in moving_rounds:
+            a, estimate = fit_round_similarity(
+                aligner.edge_table, name, layout.slices, unrotated_positions
             )
-            if abs(np.angle(a_new / if_transform)) < np.radians(1e-3):
-                break
-    else:
-        print(
-            f"[Joint] rotation below {args.rotation_threshold_mdeg:g} mdeg: IF FOVs used as is"
-        )
+            estimates[name] = estimate
+            print(
+                f"[Joint] {name}->ref similarity: rotation {estimate['rotation_mdeg']:+.1f} mdeg, "
+                f"scale {estimate['scale_ppm']:+.0f} ppm ({estimate['edges_used']} cross edges, "
+                f"fit residual median {estimate['residual_median_px']:.2f} px)"
+            )
+            applied = transforms[name]
+            needs_update = (
+                abs(estimate["rotation_mdeg"]) > args.rotation_threshold_mdeg
+                if applied is None
+                else abs(np.angle(a / applied)) >= np.radians(1e-3)
+            )
+            estimate["rotation_converged"] = not needs_update
+            if needs_update:
+                updates[name] = a
+        if not updates or iteration == 3:
+            break
+        if iteration == 0:
+            st.write_mst_edge_diagnostics(aligner, f"{out}_pass1_edge_alignment.csv")
+        transforms.update(updates)
+        print(f"[Joint] joint re-solve after resampling: {', '.join(updates)}")
+        aligner = solve(transforms)
+        refinement_passes += 1
+
+    check_round_support(aligner, layout.node_round)
     st.write_mst_edge_diagnostics(aligner, f"{out}_edge_alignment.csv")
 
-    pos = aligner.positions
-    names = ref_reader.metadata.filename
-    pd.DataFrame(
-        {
-            "round": ["ref"] * n + ["IF"] * n,
-            "filename": list(names) * 2,
-            "global_y": pos[:, 0],
-            "global_x": pos[:, 1],
-        }
-    ).to_csv(f"{out}_coordinates.csv", index=False)
-    cfg_ref = os.path.join(args.output_dir, args.ref_config_name)
-    cfg_if = os.path.join(args.output_dir, args.if_config_name)
-    write_tile_config(cfg_ref, names, pos[:n])
-    write_tile_config(cfg_if, names, pos[n:])
+    # Keep the existing 0.01-pixel configuration precision and derive the canvas
+    # from those exact exported coordinates, so every channel uses one geometry.
+    pos = np.round(aligner.positions, 2)
+    coordinate_tables = {}
+    round_summary = {}
+    for name in layout.rounds:
+        section = layout.slices[name]
+        names = readers[name].metadata.filename
+        coordinates = pd.DataFrame({
+            "round": name, "filename": names,
+            "global_y": pos[section, 0], "global_x": pos[section, 1],
+        })
+        coordinate_tables[name] = coordinates
+        coordinates.to_csv(coordinate_paths[name], index=False, mode="x")
+        write_tile_config(config_paths[name], names, pos[section])
+        transform = transforms.get(name)
+        round_summary[name] = dict(
+            tile_config=config_paths[name],
+            tile_count=len(names),
+            tile_size_yx=readers[name].metadata.size.tolist(),
+            input_dir=os.path.abspath(inputs[name][0]),
+            input_config=os.path.abspath(inputs[name][1]),
+            coordinates=coordinate_paths[name],
+            tile_transform=(
+                None if transform is None else dict(
+                    complex_a=[float(transform.real), float(transform.imag)],
+                    matrix_yx=tile_transform_matrix(transform)[0].tolist(),
+                    note="Resample each tile about its centre by z -> a*z before placement.",
+                )
+            ),
+        )
+        if name != "ref":
+            round_summary[name]["estimated_similarity"] = estimates[name]
+            round_summary[name]["fov_shifts"] = shift_paths[name]
+    pd.concat(coordinate_tables.values(), ignore_index=True).to_csv(
+        f"{out}_coordinates.csv", index=False, mode="x"
+    )
 
-    # Per-FOV IF->ref registration in the shared frame (replaces the per-tile
-    # IF registration shifts of the old pipeline).
-    shift = pos[n:] - pos[:n]
-    pd.DataFrame(
-        {
-            "position": [os.path.splitext(st.tileconfig_name(f))[0] for f in names],
-            "ref_y": pos[:n, 0],
-            "ref_x": pos[:n, 1],
-            "if_y": pos[n:, 0],
-            "if_x": pos[n:, 1],
-            "shift_y": shift[:, 0],
-            "shift_x": shift[:, 1],
-            "if_rotation_mdeg": rotation["rotation_mdeg"],
-            "if_tile_transform_applied": if_transform is not None,
-        }
-    ).to_csv(f"{out}_if_fov_shifts.csv", index=False)
+    ref_coordinates = coordinate_tables["ref"].set_index("filename")[["global_y", "global_x"]]
+    for name in moving_rounds:
+        coordinates = coordinate_tables[name]
+        # Exact filename keys join diagnostics only; unmatched native FOVs remain
+        # in all outputs and receive no invented same-FOV reference coordinates.
+        matched = ref_coordinates.reindex(coordinates.filename).to_numpy()
+        moving = coordinates[["global_y", "global_x"]].to_numpy()
+        nominal = readers[name].metadata.positions
+        field_prefix = name.lower()
+        pd.DataFrame({
+            "position": [os.path.splitext(st.tileconfig_name(f))[0] for f in coordinates.filename],
+            "filename": coordinates.filename.to_numpy(),
+            "has_matching_ref": coordinates.filename.isin(ref_coordinates.index).to_numpy(),
+            "ref_y": matched[:, 0], "ref_x": matched[:, 1],
+            f"{field_prefix}_y": moving[:, 0], f"{field_prefix}_x": moving[:, 1],
+            "shift_y": moving[:, 0] - matched[:, 0],
+            "shift_x": moving[:, 1] - matched[:, 1],
+            "nominal_y": nominal[:, 0], "nominal_x": nominal[:, 1],
+            "placement_shift_y": moving[:, 0] - nominal[:, 0],
+            "placement_shift_x": moving[:, 1] - nominal[:, 1],
+            f"{field_prefix}_rotation_mdeg": estimates[name]["rotation_mdeg"],
+            f"{field_prefix}_tile_transform_applied": transforms[name] is not None,
+        }).to_csv(shift_paths[name], index=False, mode="x")
 
-    # Direct stitching re-origins each config to its own minimum; record how the
-    # two resulting canvases map onto each other.
     e = aligner.edge_table
     groups = {}
     for g, sub in e.groupby("group"):
@@ -359,31 +483,30 @@ def main():
             residual_p90=float(r.quantile(0.9)) if len(r) else None,
             residual_max=float(r.max()) if len(r) else None,
         )
-    origin_ref, origin_if = pos[:n].min(axis=0), pos[n:].min(axis=0)
+    canvas_origin = pos.min(axis=0)
+    tile_sizes = np.vstack([
+        np.repeat(readers[name].metadata.size[None, :], readers[name].metadata.num_images, axis=0)
+        for name in layout.rounds
+    ])
+    canvas_shape = np.ceil((pos + tile_sizes).max(axis=0) - canvas_origin).astype(int)
     summary = dict(
-        coarse_if_offset_yx=D.tolist(),
+        rounds=round_summary,
+        canvas_origin_yx=canvas_origin.tolist(),
+        canvas_shape_yx=canvas_shape.tolist(),
+        rotate90=args.rotate90,
+        coarse_offsets_yx={name: offset.tolist() for name, offset in offsets.items()},
+        rotation_refinement_passes=refinement_passes,
+        max_shift_px_yx=max_shift_px.tolist(),
+        filter_sigma=args.filter_sigma,
+        shift_outlier_sigma=args.shift_outlier_sigma,
+        lsq_max_residual_px=args.lsq_max_residual_px,
+        rotation_threshold_mdeg=args.rotation_threshold_mdeg,
         edge_groups=groups,
-        canvas_origin_ref_yx=origin_ref.tolist(),
-        canvas_origin_if_yx=origin_if.tolist(),
-        if_canvas_to_ref_canvas_yx=(origin_if - origin_ref).tolist(),
-        estimated_if_to_ref_similarity=rotation,
-        if_tile_transform=(
-            None
-            if if_transform is None
-            else dict(
-                complex_a=[float(if_transform.real), float(if_transform.imag)],
-                matrix_yx=tile_transform_matrix(if_transform)[0].tolist(),
-                note="each IF FOV is resampled about its centre by z -> a*z (z = x + i*y) before placement; "
-                "direct stitching of IF channels must apply the same transform (--tile_transform_json)",
-            )
-        ),
-        note="ref_canvas_px = if_canvas_px + if_canvas_to_ref_canvas_yx (canvases from direct stitching each config)",
-        tile_config_ref=cfg_ref,
-        tile_config_if=cfg_if,
-        if_fov_shifts=f"{out}_if_fov_shifts.csv",
+        note="Every round uses canvas pixel (y, x) = joint coordinate - canvas_origin_yx; "
+        "apply its recorded tile transform and rotate90 before placement, without per-round recentering.",
     )
-    with open(f"{out}_summary.json", "w") as f:
-        json.dump(summary, f, indent=2)
+    with open(f"{out}_summary.json", "x") as f:
+        json.dump(summary, f, indent=2, allow_nan=False)
     for g, v in groups.items():
         res = "/".join(
             "n/a" if v[k] is None else f"{v[k]:.2f}"
@@ -393,11 +516,8 @@ def main():
             f"[Joint] {g:7s} edges={v['edges']:4d} inlier={v['inlier']:4d} rescued={v['rescued']:3d} "
             f"residual median/p90/max = {res} px"
         )
-    d = summary["if_canvas_to_ref_canvas_yx"]
-    print(f"[Joint] ref_canvas = IF_canvas + ({d[0]:.2f}, {d[1]:.2f}) px")
-    print(
-        f"[Joint] wrote {cfg_ref}, {cfg_if}, {out}_if_fov_shifts.csv, {out}_summary.json"
-    )
+    print(f"[Joint] shared canvas origin (y, x): {canvas_origin.tolist()}; shape: {canvas_shape.tolist()}")
+    print(f"[Joint] wrote {', '.join(config_paths.values())} and {out}_summary.json")
 
 
 if __name__ == "__main__":

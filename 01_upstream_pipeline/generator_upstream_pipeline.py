@@ -42,6 +42,7 @@ class StepSpec:
     log_root_key: str = "decode_log"
     script_dir_from_wrapper: bool = False
     sample_position_offset_flag: str | None = None
+    optional_args: ArgMap = ()
 
 
 COMMON_ARGS: ArgMap = (
@@ -424,7 +425,7 @@ STEP_SPECS = {
         log_root_key="stitch_log",
         script_dir_from_wrapper=True,
     ),
-    # 3x: joint ref + IF stitching path (MST/LSQ ashlar, unified coordinate frame)
+    # 3x: joint ref / IF / optional seqE (MST/LSQ and shared canvas)
     "ashlar_mst_stitch": StepSpec(
         "run_ashlar_mst_stitch", "script_ashlar_mst_stitch",
         "ashlar_mst_stitch", "single", "ashlar_mst_stitch",
@@ -466,6 +467,12 @@ STEP_SPECS = {
         ),
         log_root_key="stitch_log",
         script_dir_from_wrapper=True,
+        optional_args=(
+            ("ashlar_joint_stitch_if_input_config", "--if_input_config"),
+            ("ashlar_joint_stitch_seqe_channel_dir", "--seqe_channel_dir"),
+            ("ashlar_joint_stitch_seqe_input_config", "--seqe_input_config"),
+            ("ashlar_joint_stitch_output_seqe_config", "--output_seqe_config"),
+        ),
     ),
     "ashlar_joint_mosaic": StepSpec(
         "run_ashlar_joint_mosaic", "script_ashlar_joint_mosaic",
@@ -488,6 +495,10 @@ STEP_SPECS = {
         ),
         log_root_key="stitch_log",
         script_dir_from_wrapper=True,
+        optional_args=(
+            ("ashlar_joint_mosaic_seqe_channel_dir_prefix", "--seqe_channel_dir_prefix"),
+            ("ashlar_joint_mosaic_seqe_input_config", "--seqe_input_config"),
+        ),
     ),
     "cellreads_integration": StepSpec(
         "run_cellreads_integration", "script_cellreads_integration",
@@ -941,6 +952,9 @@ def _base_command(
         command.extend(("--script_dir", str(wrapper_path.parent)))
     for config_key, wrapper_flag in spec.args:
         command.extend((wrapper_flag, section[config_key]))
+    for config_key, wrapper_flag in spec.optional_args:
+        if config_key in section:
+            command.extend((wrapper_flag, section[config_key]))
     if spec.sample_position_offset_flag is not None:
         raw_offset = section[f"{spec.prefix}_maf_offset"].strip()
         if raw_offset == "auto":

@@ -22,10 +22,11 @@ Options:
   --make_3d BOOL
   --pixel_size_um FLOAT
   --slice_indices LIST
-  --tile_transform_json NAME   joint-stitching summary json (in the workdir) whose IF tile
-                               transform is applied to every channel; empty = none
+  --tile_transform_json NAME   joint summary: per-round transforms and shared canvas
   --ref_channel_dir NAME       also stitch this reference-round channel dir ...
-  --ref_input_config NAME      ... with this config (no tile transform); both empty = skip
+  --ref_input_config NAME      ... with this config; both empty = skip
+  --seqe_channel_dir_prefix PREFIX  also export all four seqE channels; empty = skip
+  --seqe_input_config NAME     (default TileConfiguration.joint_seqE.txt)
   --script_dir PATH
   --conda_sh PATH
   -h, --help
@@ -65,6 +66,8 @@ SLICE_INDICES=""
 TILE_TRANSFORM_JSON=""
 REF_CHANNEL_DIR=""
 REF_INPUT_CONFIG=""
+SEQE_CHANNEL_DIR_PREFIX=""
+SEQE_INPUT_CONFIG="TileConfiguration.joint_seqE.txt"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -87,6 +90,8 @@ while [[ $# -gt 0 ]]; do
         --tile_transform_json) TILE_TRANSFORM_JSON="$2"; shift 2 ;;
         --ref_channel_dir) REF_CHANNEL_DIR="$2"; shift 2 ;;
         --ref_input_config) REF_INPUT_CONFIG="$2"; shift 2 ;;
+        --seqe_channel_dir_prefix) SEQE_CHANNEL_DIR_PREFIX="$2"; shift 2 ;;
+        --seqe_input_config) SEQE_INPUT_CONFIG="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) echo "Error: unknown parameter: $1" >&2; print_usage >&2; exit 1 ;;
     esac
@@ -115,9 +120,6 @@ finish() {
 }
 trap finish EXIT
 
-for value in PROJECT_ROOT PROJECT_NAME REG_DIR_SUFFIX SCRIPT_DIR CONDA_SH STITCHING_WORKDIR CHANNEL_MODE INPUT_CONFIG; do
-    [[ -n "${!value}" ]] || { echo "Error: ${value} is required" >&2; exit 1; }
-done
 case "$CHANNEL_MODE" in
     LeicaIF) CHANNEL_NAMES="561-CA9,488-CD144,647-CD31,DAPI" ;;
     OlympusIF) CHANNEL_NAMES="488-CD144,561-CA9,647-CD31,DAPI" ;;
@@ -150,6 +152,8 @@ echo "[PARAM] SLICE_INDICES=${SLICE_INDICES}"
 echo "[PARAM] TILE_TRANSFORM_JSON=${TILE_TRANSFORM_JSON}"
 echo "[PARAM] REF_CHANNEL_DIR=${REF_CHANNEL_DIR}"
 echo "[PARAM] REF_INPUT_CONFIG=${REF_INPUT_CONFIG}"
+echo "[PARAM] SEQE_CHANNEL_DIR_PREFIX=${SEQE_CHANNEL_DIR_PREFIX}"
+echo "[PARAM] SEQE_INPUT_CONFIG=${SEQE_INPUT_CONFIG}"
 
 PY_SCRIPT="${SCRIPT_DIR}/p32_ashlar_stitch_mosaic_joint.py"
 
@@ -164,22 +168,14 @@ TRANSFORM_ARGS=()
 if [[ -n "$TILE_TRANSFORM_JSON" ]]; then
     TRANSFORM_ARGS=(--tile_transform_json "${WORK_DIR}/${TILE_TRANSFORM_JSON}")
 fi
-if [[ -n "$REF_CHANNEL_DIR" || -n "$REF_INPUT_CONFIG" ]]; then
-    [[ -n "$REF_CHANNEL_DIR" && -n "$REF_INPUT_CONFIG" ]] || { echo "Error: --ref_channel_dir and --ref_input_config must be given together" >&2; exit 1; }
-fi
-for path in "$INPUT_CONFIG_FILE" "$CONDA_SH" "$PY_SCRIPT"; do
-    [[ -f "$path" ]] || { echo "Error: missing file: $path" >&2; exit 1; }
-done
-if [[ -n "$TILE_TRANSFORM_JSON" ]]; then
-    [[ -f "${WORK_DIR}/${TILE_TRANSFORM_JSON}" ]] || { echo "Error: missing file: ${WORK_DIR}/${TILE_TRANSFORM_JSON}" >&2; exit 1; }
-fi
 source "$CONDA_SH"
 set +u
 conda activate ashlar
 set -u
 
 if [[ -n "$REF_CHANNEL_DIR" ]]; then
-    REF_OUTPUT_PREFIX="${STITCH_RESULT_DIR}/${OUTPUT_PREFIX}_${REF_CHANNEL_DIR#"$CHANNEL_DIR_PREFIX"}"
+    REF_CHANNEL_NAME="${REF_CHANNEL_DIR##*/}"
+    REF_OUTPUT_PREFIX="${STITCH_RESULT_DIR}/${OUTPUT_PREFIX}_${REF_CHANNEL_NAME#raw-}"
     PY_ARGS=(
         --input_dir "${WORK_DIR}/${REF_CHANNEL_DIR}"
         --config_file "${WORK_DIR}/${REF_INPUT_CONFIG}"
@@ -188,6 +184,8 @@ if [[ -n "$REF_CHANNEL_DIR" ]]; then
         --make_3d "$MAKE_3D"
         --pixel_size_um "$PIXEL_SIZE_UM"
         --slice_indices "$SLICE_INDICES"
+        --round_name ref
+        "${TRANSFORM_ARGS[@]}"
     )
     if [[ "$ROTATE_IMAGES" == "true" ]]; then
         PY_ARGS+=(--rotate90)
@@ -211,7 +209,8 @@ for CHANNEL_NAME in "${CHANNEL_ARRAY[@]}"; do
         --make_3d "$MAKE_3D"
         --pixel_size_um "$PIXEL_SIZE_UM"
         --slice_indices "$SLICE_INDICES"
-        ${TRANSFORM_ARGS[@]+"${TRANSFORM_ARGS[@]}"}
+        --round_name IF
+        "${TRANSFORM_ARGS[@]}"
     )
     if [[ "$ROTATE_IMAGES" == "true" ]]; then
         PY_ARGS+=(--rotate90)
@@ -219,3 +218,26 @@ for CHANNEL_NAME in "${CHANNEL_ARRAY[@]}"; do
     python -u "$PY_SCRIPT" "${PY_ARGS[@]}"
     [[ -s "$OUTPUT_2D_FILE" ]] || { echo "Error: stitched 2D output missing or empty: $OUTPUT_2D_FILE" >&2; exit 1; }
 done
+
+if [[ -n "$SEQE_CHANNEL_DIR_PREFIX" ]]; then
+    for CHANNEL_NAME in 647-GCnt 561-GTrb Padlayer DAPI; do
+        INPUT_DIR="${WORK_DIR}/${SEQE_CHANNEL_DIR_PREFIX}${CHANNEL_NAME}"
+        OUTPUT_IMAGE_PREFIX="${STITCH_RESULT_DIR}/${OUTPUT_PREFIX}_seqE_${CHANNEL_NAME}"
+        PY_ARGS=(
+            --input_dir "$INPUT_DIR"
+            --config_file "${WORK_DIR}/${SEQE_INPUT_CONFIG}"
+            --output_image_prefix "$OUTPUT_IMAGE_PREFIX"
+            --output_format "$OUTPUT_FORMAT"
+            --make_3d "$MAKE_3D"
+            --pixel_size_um "$PIXEL_SIZE_UM"
+            --slice_indices "$SLICE_INDICES"
+            --round_name seqE
+            "${TRANSFORM_ARGS[@]}"
+        )
+        if [[ "$ROTATE_IMAGES" == "true" ]]; then
+            PY_ARGS+=(--rotate90)
+        fi
+        python -u "$PY_SCRIPT" "${PY_ARGS[@]}"
+        [[ -s "${OUTPUT_IMAGE_PREFIX}_2d.ome.tif" ]] || { echo "Error: stitched 2D output missing or empty: ${OUTPUT_IMAGE_PREFIX}_2d.ome.tif" >&2; exit 1; }
+    done
+fi

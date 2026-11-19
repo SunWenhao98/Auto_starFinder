@@ -1,109 +1,119 @@
-# 3x Joint ref + IF Stitching 工作流说明
+# 31–32: Joint ref / IF / seqE Stitching
 
-> 3x 是在原有 Fiji（1x）和 Ashlar（2x）流程之外**新增**的一条流程，原有流程不受影响：
-> - `30_ashlar_stitch_mst.sh` / `p30_ashlar_stitch_mst.py`：单轮 ashlar，采用 MST 选边、一致性检查、环路复核和全局 LSQ（可选，用于 QC 或 TE 等单轮拼接）；
-> - `31_ashlar_stitch_joint.sh` / `p31_ashlar_stitch_joint.py`：把参考轮（ref round）和 IF 轮的 FOV 放进同一个 ashlar 拼接问题一起求解，输出同一坐标系下的两份 TileConfiguration；
-> - `32_ashlar_stitch_mosaic_joint.sh` / `p32_ashlar_stitch_mosaic_joint.py`：按联合坐标出图。
+本流程用各轮 DAPI 联合求解 FOV 位置，再把位置与轮次变换用于该轮全部通道。ref、IF、seqE 保留各自的 FOV 清单，最终输出同一原点、尺寸与方向的画布，可直接叠加。
 
----
+`30` 是可单独使用的单轮 MST/LSQ 拼接；`31` 复用其求解器，但不要求先执行 `30`。`32` 只按已求出的几何关系出图，不重新配准蛋白或 seqE 信号。
 
-## 📋 文档定位
+## 输入与准备
 
-3x 流程的思路是：**ref 轮定义统一坐标系，联合拼接把 IF 轮放进这个坐标系。** 原来需要三条路径才能覆盖的情况，用这一条路径都能处理：
+三轮需要各自的 DAPI tile 目录和名义 TileConfiguration。每份 config 的文件名、坐标与该轮实际 FOV 对应；不要求三轮同名、同数量，不先取交集。MAF 的物理 Position 身份与样本 offset 必须在准备时核对，不能用过滤后的细胞矩阵清单替代原始拍摄清单。
 
-| 原路径 | 涉及步骤 | 3x 中对应的部分 |
-|---|---|---|
-| 逐 FOV IF→ref 配准，再生成 moving 坐标 | `nuclei_reg` (11) + `prepare_moveimages` (23) | 跨轮边 + 逐 FOV 偏移表 |
-| IF 自拼接 + 大图整体平移 | `pyreg`/`matreg`/`reg_compare`/`transform_apply` (25/26/28/29) | 粗定位 + 联合求解 |
-| IF 独立拼接（仅作展示） | `*Independent` channel mode | IF–IF 边 |
-
-3x IF 流程（ini 里打开这四步即可）：
+推荐在新的 stitching workdir 内使用以下实体子目录；本流程不会创建这份输入布局：
 
 ```text
-prepare_tile_config (12)   MAF -> TileConfiguration.initial.txt          （与原有流程共用）
-prepare_layout      (21)   ref 轮 -> raw-refDAPI；IF 轮 -> raw-561-CA9 / raw-488-CD144 / raw-647-CD31 / raw-DAPI（与原有流程共用）
-ashlar_joint_stitch (31)   -> TileConfiguration.joint_ref.txt + TileConfiguration.joint_IF.txt
-ashlar_joint_mosaic (32)   ref 通道用 joint_ref；IF 通道用 joint_IF（加 IF tile 变换）
+new_joint_workdir/
+  ref/raw-refDAPI/                  # 参考轮 ch03
+  ref/TileConfiguration.initial.txt
+  IF/raw-DAPI/                     # IF ch03
+  IF/raw-561-CA9/                   # IF ch00
+  IF/raw-488-CD144/                 # IF ch01
+  IF/raw-647-CD31/                  # IF ch02
+  IF/TileConfiguration.initial.txt
+  seqE/raw-DAPI/                   # round011 ch03
+  seqE/raw-647-GCnt/                # round011 ch00
+  seqE/raw-561-GTrb/                # round011 ch01
+  seqE/raw-Padlayer/                # round011 ch02
+  seqE/TileConfiguration.initial.txt
 ```
 
-`ashlar_mst_stitch` (30) 不是必需步骤；需要单轮 mosaic 做检查，或拼 TE 等单轮数据时可以单独运行。
+`21` 的 IF 和 seqE 模式都会生成 `raw-DAPI`，因此两轮必须放在不同子目录。保留原始位深时，准备与出图都应选择 `preserve`；已转为 uint8 的输入无法通过后续转回 uint16 恢复精度。准备不同轮次通常需多个 JOB/分阶段生成，现有 generator 每个 JOB 每一步只调用一次，不能只打开开关就自动准备三轮。
 
-下游 reads 整合（`cellreads_registered_tile_config`）应使用 `TileConfiguration.joint_ref.txt`：转录本由 ref 轮 tile 的局部坐标加上 tile 位置得到，与蛋白图处在同一个坐标系。
+## 实际调用链与算法
 
-## 🔗 Runtime call chain
-
-```mermaid
-flowchart LR
-    accTitle: Joint stitching runtime chain
-    accDescr: The wrapper validates inputs and runs the Python joint stitcher, which reuses MSTEdgeAligner from p30, then the mosaic step stitches ref and IF channels with the joint configs.
-
-    wrapper["31_ashlar_stitch_joint.sh"] --> py["p31_ashlar_stitch_joint.py"]
-    py --> mst["p30_ashlar_stitch_mst.py: MSTEdgeAligner"]
-    py --> cfg["TileConfiguration.joint_ref / joint_IF"]
-    py --> shifts["joint_ref-IF_if_fov_shifts.csv"]
-    py --> summary["joint_ref-IF_summary.json"]
-    cfg --> mosaic["32_ashlar_stitch_mosaic_joint.sh -> p32"]
-    summary -->|--tile_transform_json| mosaic
+```text
+各轮布局和名义 config → 31 wrapper → p31 → p30.MSTEdgeAligner
+                                         ↓
+                          三份联合 config + summary
+                                         ↓
+                       32 wrapper → p32 → 九个单通道 mosaic
 ```
 
-## ⚙️ 算法
+1. **读入与节点对应**：每轮分别读取 MIP，按 ref、IF、seqE 连接节点索引。轮内文件名必须唯一；不同轮允许出现同名 FOV。当前 Ashlar 配准使用一个共享 tile XY 尺寸，因此不同轮尺寸不同时明确失败。
+2. **粗定位**：三轮名义坐标放在同一低分辨率画布，缩小 16 倍；按各轮实际覆盖范围建立 mask，使用 masked normalized cross-correlation 得到 IF、seqE 相对 ref 的粗平移；平滑在有效覆盖边界按权重归一化，避免把缺失 FOV 当成暗信号。此处沿用 scikit-image 0.26 的默认最小重叠比例 0.3。粗平移用于发现实际重叠的邻居，不要求同编号 FOV 之间有重叠。
+3. **一次联合问题**：以矩形真实交叠建立候选边，包含位置完全重合的跨轮 tile。ref–ref、IF–IF、seqE–seqE 和各跨轮边共同进入 MST、一致性/环路复核及加权 LSQ。三轮并非两次独立的 ref–moving 求解。
+4. **分别估计几何变换**：从第一遍各轮内部边求得未旋转布局，固定这些布局；利用 ref 与每个 moving 的实测跨轮边拟合相似变换。IF、seqE 分别估计旋转和尺度。默认旋转阈值 10 mdeg，超过阈值时绕 tile 中心按拟合的相似变换重采样；所有轮随后再次联合求解。最多三次重采样复求解，变化小于 1 mdeg 时停止，summary 记录收敛状态。小于旋转阈值时不会单独因尺度差异而重采样。
+5. **有效连接与输出**：相似变换必须有可辨识的实测边；最终每个 moving 连通分量必须通过实测跨轮边到达 ref，不能仅靠猜测跨轮边判为成功。轮内低纹理 tile 可沿用名义布局 fallback，需结合边表人工复核。最终配置保留 0.01 px 精度，全部输出坐标的外包范围确定共同画布。
 
-1. **读入**：ref 和 IF 各 N 个 FOV 的 MIP，名义坐标都来自 `TileConfiguration.initial.txt`。tile 只读一次，缓存后各遍复用。
-2. **粗定位**：把两轮 FOV 都按名义坐标缩小 16 倍拼成低分辨率图，用 FFT 互相关得到 IF 相对 ref 的整体偏移 D。D 只用来把 IF FOV 放到它实际拍到的 ref 区域上方，以便找到跨轮邻居；精度要求是几十 px 以内。
-3. **联合求解（第 1 遍）**：2N 个 tile 交给 `MSTEdgeAligner`（`tile_group = ref/IF`）。邻接图自动包含 ref–ref、IF–IF、ref|IF 三类边；一致性检查按 `ref-H`、`ref-V`、`IF-H`、`IF-V`、`ref|IF` 分组；之后做环路复核、MST 连通检查和全局加权 LSQ（稳健剔除残差 > 3 px 的非桥边）。
-4. **旋转估计**：用第 1 遍自己的 ref–ref 和 IF–IF 边，分别求出两轮的单轮位置 P、Q，再用所有可信的跨轮边稳健拟合相似变换 `z_ref = a·z_IF + b`。
-5. **旋转校正**：|旋转| > `rotation_threshold_mdeg`（默认 10 mdeg）时，每个 IF FOV 绕自身中心按 a 重采样（线性插值，无数据处填 0；ashlar 拼图时会在 0 值处保留相邻 tile 的数据），然后重新联合求解，迭代到旋转估计的变化 < 1 mdeg（最多 3 遍）。P、Q 只取自第 1 遍（tile 尚未旋转）。
+当前不是非刚性配准，也不保证任意大旋转、弱 DAPI 或完全无重叠样本可成功。每个 moving 的相似变换仍需与 ref 的有效直接匹配。三轮联合会影响 ref 的最终位置，和旧双轮结果不是同一个可直接互换的坐标版本。
 
-只平移 tile 无法表示旋转：小旋转会摊到每条接缝上，大旋转（例如载玻片重新放置，> 1°）会让跨轮匹配整体失败。
+## 共同画布与输出
 
-## 📤 输出（写在 stitching workdir）
+每轮都使用以下关系，不再按各轮 config 分别归零：
 
-| 文件 | 内容 |
+```text
+canvas_pixel_yx = joint_coordinate_yx - canvas_origin_yx
+canvas_shape_yx = ceil(max(all_tile_positions + tile_size) - canvas_origin_yx)
+```
+
+`p32` 从新 summary 读取共同原点、尺寸、`rotate90` 与 `rounds[round_name].tile_transform`。先按记录的方向旋转 tile，再应用该轮变换，最后放入共同画布。MIP、指定 Z 切片和既有 stack 分支均沿用这个 XY 画布。缺少某轮覆盖的位置为空白，不裁掉该轮以外的视野。
+
+| 输出 | 含义 |
 |---|---|
-| `TileConfiguration.joint_ref.txt` | ref FOV 在统一坐标系中的位置（**统一坐标框架**） |
-| `TileConfiguration.joint_IF.txt` | IF FOV 在同一坐标系中的位置 |
-| `joint_ref-IF_if_fov_shifts.csv` | 逐 FOV 的 IF→ref 配准：`ref_y/x`、`if_y/x`、`shift_y/x = IF − ref`、`if_rotation_mdeg`、`if_tile_transform_applied`。替代原来的逐 FOV 配准偏移 |
-| `joint_ref-IF_summary.json` | 粗定位偏移、各类边的残差统计、旋转/尺度估计、`if_tile_transform`（若做了校正）、两张画布的原点关系 `if_canvas_to_ref_canvas_yx` |
-| `joint_ref-IF_edge_alignment.csv`（以及 `_pass1_*`） | 每条边的配准、分组、是否可信、LSQ 残差 |
-| `joint_ref-IF_coordinates.csv` | 2N 个 FOV 的最终坐标 |
+| `TileConfiguration.joint_ref.txt` | ref 全部 FOV 的联合坐标 |
+| `TileConfiguration.joint_IF.txt` | IF 全部 FOV 的联合坐标 |
+| `TileConfiguration.joint_seqE.txt` | seqE 全部 FOV 的联合坐标，启用 seqE 时生成 |
+| `<prefix>_summary.json` | 各轮输入、配置、变换、收敛状态、共同画布与边组残差 |
+| `<prefix>_coordinates.csv`、`_<round>_coordinates.csv` | 联合及各轮位置；行键是 round + filename |
+| `<prefix>_if_fov_shifts.csv`、`_seqe_fov_shifts.csv` | 同名 ref 对照及各自名义位置的偏移；无同名 ref 时 `has_matching_ref=false`、对应参考坐标为空，不删除该 FOV |
+| `<prefix>_edge_alignment.csv`、可选 `_pass1_edge_alignment.csv` | 最终及首遍实测边、筛选状态与 LSQ 残差 |
 
-**画布对应**：direct stitch 会把每份 config 的最小坐标作为各自画布的原点，所以 `ref 画布像素 = IF 画布像素 + if_canvas_to_ref_canvas_yx`。
+同名 FOV 偏移表是位置诊断，经过旋转的图像需要同时应用 tile transform，不能把该表当作旧逐 FOV 纯平移流程的直接替代。
 
-**IF 通道出图**：`32_ashlar_stitch_mosaic_joint.sh --tile_transform_json joint_ref-IF_summary.json`，json 里没有 `if_tile_transform` 时自动不做变换。
+32 的九通道输出前缀分别为 `<prefix>_refDAPI`、`<prefix>_<IF channel>`、`<prefix>_seqE_<seqE channel>`；IF DAPI 与 seqE DAPI 不会撞名。正式图像为 `*_2d.ome.tif` 金字塔图。默认建议 `make_3d=false`；既有 stack 分支的 C/Z 元数据问题不在此次修正范围，不能把 XY 画布检查当作三维输出验收。
 
-## 🔧 ini 配置（`batch_config.upstream.ini`）
+写入前检查本次目标路径，已有结果直接失败；不提供覆盖开关。输入与输出可同属 workdir，重复计算应换新的工作目录或完整输出名，不能删除旧文件后冒充续跑。
+
+## 三轮配置示例
+
+以下为完整批配置中需要调整的项，不是可独立提交的完整 INI。先准备三轮输入，再生成 31 → 32 的任务链；不要把本示例指向已有生产输出目录。
 
 ```ini
-run_prepare_tile_config = true
-run_prepare_layout = true          ; ref 轮和 IF 轮都要放进同一个 stitching workdir
 run_ashlar_joint_stitch = true
 run_ashlar_joint_mosaic = true
+ashlar_joint_stitch_stitching_workdir = new_joint_workdir
+ashlar_joint_stitch_ref_channel_dir = ref/raw-refDAPI
+ashlar_joint_stitch_if_channel_dir = IF/raw-DAPI
+ashlar_joint_stitch_input_config = ref/TileConfiguration.initial.txt
+ashlar_joint_stitch_if_input_config = IF/TileConfiguration.initial.txt
+ashlar_joint_stitch_seqe_channel_dir = seqE/raw-DAPI
+ashlar_joint_stitch_seqe_input_config = seqE/TileConfiguration.initial.txt
+ashlar_joint_stitch_output_ref_config = TileConfiguration.joint_ref.txt
+ashlar_joint_stitch_output_if_config = TileConfiguration.joint_IF.txt
+ashlar_joint_stitch_output_seqe_config = TileConfiguration.joint_seqE.txt
+ashlar_joint_stitch_output_prefix = joint_ref-IF-seqE
 
-ashlar_joint_stitch_stitching_workdir = 15_IFuint8_Fiji
-ashlar_joint_stitch_ref_channel_dir = raw-refDAPI
-ashlar_joint_stitch_if_channel_dir = raw-DAPI
-ashlar_joint_stitch_input_config = TileConfiguration.initial.txt
-ashlar_joint_stitch_rotation_threshold_mdeg = 10
-
+ashlar_joint_mosaic_stitching_workdir = new_joint_workdir
+ashlar_joint_mosaic_channel_mode = LeicaIF
+ashlar_joint_mosaic_channel_dir_prefix = IF/raw-
 ashlar_joint_mosaic_input_config = TileConfiguration.joint_IF.txt
-ashlar_joint_mosaic_tile_transform_json = joint_ref-IF_summary.json
-ashlar_joint_mosaic_ref_channel_dir = raw-refDAPI
+ashlar_joint_mosaic_ref_channel_dir = ref/raw-refDAPI
 ashlar_joint_mosaic_ref_input_config = TileConfiguration.joint_ref.txt
-
-cellreads_registered_tile_config = TileConfiguration.joint_ref.txt
+ashlar_joint_mosaic_seqe_channel_dir_prefix = seqE/raw-
+ashlar_joint_mosaic_seqe_input_config = TileConfiguration.joint_seqE.txt
+ashlar_joint_mosaic_tile_transform_json = joint_ref-IF-seqE_summary.json
+ashlar_joint_mosaic_stitch_result_dirname = stitching_results
+ashlar_joint_mosaic_output_prefix = stitched_joint
+ashlar_joint_mosaic_output_format = preserve
+ashlar_joint_mosaic_make_3d = false
+ashlar_joint_mosaic_slice_indices =
 ```
 
-## ✅ 验证（GBM001–016，2026-10）
+wrapper 主通道组始终对应 31 的 IF/moving 角色；`channel_mode` 只选择通道名称，因此旧双轮中将 seqE 当作 moving 的调用也保持此语义。新增 seqE 前缀才启用第三轮。未设置 seqE 输入时，31 保留两轮调用能力；IF 未另给 config 时仍使用参考 config。新生成的两轮 summary 也采用共同画布。32 仍可读取旧 summary：ref 不应用 IF 变换，IF 使用旧变换，两轮保留旧式独立画布；旧 summary 不可用于 seqE。不传 summary 时保留直接拼图的独立画布行为，不能宣称可直接叠加。
 
-- 16 个样本全部连成一个整体。跨轮残差中位数 0.18–0.37 px；GBM006–009 约 1 px（IF 轮整体偏约 1.5 个 FOV，跨轮边都是半重叠，加上两轮视野内存在约 0.1% 的几何差异，按决定未做校正）。
-- 边缘和中心的跨轮残差一致，没有随距离累积。
-- GBM001/002 两轮之间旋转约 −1.35°，只有经过自动旋转校正才能对上；GBM003–009、015 的旋转为 26–58 mdeg，校正后接缝回到 0.15–0.38 px。
-- 以上都是**自洽性指标**，不是 ground truth。和"使用两轮单轮拼接结果做粗定位与旋转估计"的早期实现相比：
-  - 旋转估计一致（≤ 0.3 mdeg），跨轮残差相当或略低；
-  - 但整个坐标系的绝对尺度有最多约 60 ppm 的差异（2.5 万 px 拼图边缘约 1–2 px），ref 与 IF 之间有约 0.3 px 的整体平移差异；
-  - 这些差异在配准本身的不确定性范围内，不影响 ref↔IF 的对应关系。
+新三轮结果若用于 reads 整合，须同步采用本次 `TileConfiguration.joint_ref.txt` 及对应画布原点。不能把新图像直接套在旧矩阵坐标上；本次代码扩展不重跑 reads 整合。
 
-## ⚠️ 注意
+## 验证范围与历史记录
 
-- 没有 ref 轮数据的样本无法使用这条流程。
-- 稳健剔除只删除"非桥"边，不会造成 FOV 断连；但如果模型本身不对（例如旋转很大却没有校正），可能会成片删除跨轮边，此时应检查 summary 中 `ref|IF` 的 `lsq_removed` 数量。
+当前测试入口：`test_contracts/test_joint_stitching_contracts.py`（wrapper / generator）和 `test_contracts/test_joint_three_round_contracts.py`（真实合成 TIFF / CLI）。后者需激活 ashlar 环境以设置 Java，检查独立 FOV 清单、已知平移、小旋转、共同画布、实际地标、缺乏匹配失败及防覆盖。测试使用 Ashlar 1.20.0；行为依据实际安装的 `ashlar/reg.py`，可对照[官方 v1.20.0 源码](https://github.com/labsyspharm/ashlar/blob/v1.20.0/ashlar/reg.py)。2026-11-19：9 项 wrapper/generator 契约通过；合成作业 5242827 的 3 项真实 TIFF 行为契约全部通过（18 秒、4 CPU 配额、计算线程 1）。首轮不同覆盖测试曾失败，定位并修正粗配准覆盖边界偏差后重测通过；未通过放宽坐标误差容限处理。诊断日志保存在项目 `02_Upstream/04_stitching/diagnostics/0001_261119_002916_joint_three_round_contracts/`。合成测试通过不等于 GBM 三轮真实数据已验收。
+
+保留原说明中的历史事实：2026-10 的双轮版本曾记录 GBM001–016 连通、跨轮残差中位数 0.18–0.37 px，GBM006–009 约 1 px；GBM001/002 旋转约 −1.35°，GBM003–009、015 约 26–58 mdeg。旧说明还记录不同实现间绝对尺度最多约 60 ppm、跨轮整体平移约 0.3 px 的差异。这些是旧双轮版本的自洽性记录，本次未独立复算，也不能作为新三轮版本或生物学正确性的验收证据。

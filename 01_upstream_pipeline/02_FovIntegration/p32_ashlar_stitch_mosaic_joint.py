@@ -1,8 +1,8 @@
 """
 Ashlar direct stitch from pre-computed TileConfiguration.registered.txt.
 
-This skips EdgeAligner and reuses DAPI-derived coordinates for other IF
-channels, for example DAPI -> 488-CD144/561-CA9/647-CD31.
+This skips EdgeAligner and reuses DAPI-derived coordinates and tile transforms
+for each round's channels. Three-round summaries define one shared canvas.
 """
 
 import argparse
@@ -55,9 +55,15 @@ def build_parser():
         "--tile_transform_json",
         default=None,
         help=(
-            "Joint-stitching summary json; if it records an IF tile transform, every "
-            "FOV is resampled by it (use for IF channels with TileConfiguration.joint_IF.txt)."
+            "Joint-stitching summary JSON. Three-round summaries supply the round's "
+            "tile transform, shared canvas and actual rotate90 setting."
         ),
+    )
+    parser.add_argument(
+        "--round_name",
+        choices=["ref", "IF", "seqE"],
+        default="IF",
+        help="Round whose coordinates and tile transform are being rendered.",
     )
     return parser
 
@@ -66,7 +72,7 @@ if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
     build_parser().parse_args()
 
 import numpy as np
-import skimage.io
+import tifffile
 from ashlar import reg
 from ashlar.reg import Mosaic, PyramidWriter
 
@@ -86,12 +92,8 @@ def parse_slice_indices(spec):
     return indices
 
 
-def load_tile_transform(path):
-    """IF FOV resampling function from a joint-stitching summary json, or None."""
-    if not path:
-        return None
-    with open(path) as f:
-        tf = json.load(f).get("if_tile_transform")
+def build_tile_transform(tf):
+    """Build the same per-tile resampling operation used by the joint solver."""
     if tf is None:
         return None
     spec = importlib.util.spec_from_file_location(
@@ -196,7 +198,7 @@ class TiffDirectReader(reg.PlateReader):
 
         first_file = os.path.join(self.path, self.coords_data[0]["filename"])
         try:
-            img = skimage.io.imread(first_file)
+            img = tifffile.imread(first_file)
             print(f"[DirectReader] First file: {os.path.basename(first_file)}")
             print(
                 f"[DirectReader] Raw Shape: {img.shape}, Detected input dtype: {img.dtype}"
@@ -287,7 +289,7 @@ class TiffDirectReader(reg.PlateReader):
     def read(self, series, c):
         fname = self.coords_data[series]["filename"]
         full_path = os.path.join(self.path, fname)
-        img = skimage.io.imread(full_path)
+        img = tifffile.imread(full_path)
 
         if self.mode == "mip":
             if img.ndim == 3:
@@ -313,15 +315,22 @@ class TiffDirectReader(reg.PlateReader):
 class DirectAligner:
     """Minimal aligner interface required by ashlar.reg.Mosaic."""
 
-    def __init__(self, reader):
+    def __init__(self, reader, canvas_origin=None, canvas_shape=None):
         self.reader = reader
         self.metadata = reader.metadata
-        self.origin = self.metadata.positions.min(axis=0)
+        self.origin = (
+            self.metadata.positions.min(axis=0)
+            if canvas_origin is None
+            else np.asarray(canvas_origin, dtype=float)
+        )
         self.positions = self.metadata.positions - self.origin
         self.centers = self.positions + self.metadata.size / 2
+        self.canvas_shape = None if canvas_shape is None else tuple(canvas_shape)
 
     @property
     def mosaic_shape(self):
+        if self.canvas_shape is not None:
+            return self.canvas_shape
         upper = self.positions + self.metadata.size
         return tuple(np.ceil(upper.max(axis=0)).astype(int))
 
@@ -329,13 +338,42 @@ class DirectAligner:
 def main():
     args = build_parser().parse_args()
     do_make_3d = args.make_3d.lower() == "true"
-    tile_transform = load_tile_transform(args.tile_transform_json)
     slice_indices = parse_slice_indices(args.slice_indices)
-
-    os.makedirs(os.path.dirname(args.output_image_prefix), exist_ok=True)
+    rotate90 = args.rotate90
+    transform_spec = None
+    canvas_origin = None
+    canvas_shape = None
+    summary_mode = "no summary; per-config canvas"
+    if args.tile_transform_json:
+        with open(args.tile_transform_json) as f:
+            summary = json.load(f)
+        if "rounds" in summary:
+            transform_spec = summary["rounds"][args.round_name]["tile_transform"]
+            canvas_origin = summary["canvas_origin_yx"]
+            canvas_shape = summary["canvas_shape_yx"]
+            rotate90 = summary["rotate90"]
+            summary_mode = "three-round summary; shared canvas"
+        else:
+            if args.round_name == "seqE":
+                raise ValueError("Legacy joint summaries support ref and IF only")
+            if args.round_name == "IF":
+                transform_spec = summary.get("if_tile_transform")
+            summary_mode = "legacy two-round summary; per-config canvas"
+    tile_transform = build_tile_transform(transform_spec)
 
     path_2d = f"{args.output_image_prefix}_2d.ome.tif"
     path_3d = f"{args.output_image_prefix}_3d.ome.tif"
+    slice_paths = [
+        (index, f"{args.output_image_prefix}_z{index:03d}_2d.ome.tif")
+        for index in slice_indices
+    ]
+    output_paths = [path_2d] + [path for _, path in slice_paths]
+    if do_make_3d:
+        output_paths.append(path_3d)
+    existing_outputs = [path for path in output_paths if os.path.lexists(path)]
+    if existing_outputs:
+        raise FileExistsError(f"Outputs already exist: {', '.join(existing_outputs)}")
+    os.makedirs(os.path.dirname(args.output_image_prefix), exist_ok=True)
 
     channel_info = ""
     if args.channel_from and args.channel_to:
@@ -344,8 +382,14 @@ def main():
     print(f"Config: {args.config_file}")
     print(f"Output Prefix: {args.output_image_prefix}")
     print(f"Output format: {args.output_format}")
+    print(f"Round: {args.round_name}")
+    print(f"Summary mode: {summary_mode}")
+    print(f"Rotate90: {rotate90}")
+    if canvas_origin is not None:
+        print(f"Shared canvas origin (Y, X): {canvas_origin}")
+        print(f"Shared canvas shape (Y, X): {canvas_shape}")
     print(
-        f"IF tile transform: {'applied from ' + args.tile_transform_json if tile_transform else 'none'}"
+        f"Tile transform: {'applied from ' + args.tile_transform_json if tile_transform else 'none'}"
     )
 
     print("\n=== Phase 1: Writing 2D MIP Mosaic (Direct, no alignment) ===")
@@ -355,12 +399,12 @@ def main():
         channel_from=args.channel_from,
         channel_to=args.channel_to,
         mode="mip",
-        rotate90=args.rotate90,
+        rotate90=rotate90,
         pixel_size_um=args.pixel_size_um,
         output_format=args.output_format,
         tile_transform=tile_transform,
     )
-    aligner_2d = DirectAligner(reader_2d)
+    aligner_2d = DirectAligner(reader_2d, canvas_origin, canvas_shape)
 
     mosaic_2d = Mosaic(aligner=aligner_2d, shape=aligner_2d.mosaic_shape, verbose=True)
     writer_2d = PyramidWriter(
@@ -369,8 +413,7 @@ def main():
     writer_2d.run()
     print(f"2D Image saved: {path_2d}")
 
-    for slice_index in slice_indices:
-        path_slice = f"{args.output_image_prefix}_z{slice_index:03d}_2d.ome.tif"
+    for slice_index, path_slice in slice_paths:
         print(f"\n=== Phase 2: Writing Z-slice {slice_index} Mosaic ===")
         reader_slice = TiffDirectReader(
             args.input_dir,
@@ -378,13 +421,13 @@ def main():
             channel_from=args.channel_from,
             channel_to=args.channel_to,
             mode="slice",
-            rotate90=args.rotate90,
+            rotate90=rotate90,
             pixel_size_um=args.pixel_size_um,
             slice_index=slice_index,
             output_format=args.output_format,
             tile_transform=tile_transform,
         )
-        aligner_slice = DirectAligner(reader_slice)
+        aligner_slice = DirectAligner(reader_slice, canvas_origin, canvas_shape)
 
         mosaic_slice = Mosaic(
             aligner=aligner_slice, shape=aligner_slice.mosaic_shape, verbose=True
@@ -407,12 +450,12 @@ def main():
             channel_from=args.channel_from,
             channel_to=args.channel_to,
             mode="stack",
-            rotate90=args.rotate90,
+            rotate90=rotate90,
             pixel_size_um=args.pixel_size_um,
             output_format=args.output_format,
             tile_transform=tile_transform,
         )
-        aligner_3d = DirectAligner(reader_3d)
+        aligner_3d = DirectAligner(reader_3d, canvas_origin, canvas_shape)
 
         mosaic_3d = Mosaic(
             aligner=aligner_3d, shape=aligner_3d.mosaic_shape, verbose=True
