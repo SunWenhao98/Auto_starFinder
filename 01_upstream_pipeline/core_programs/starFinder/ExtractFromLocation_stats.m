@@ -1,8 +1,9 @@
 function [allReads, allSpots, allScores, csMat, allIntensity_table, maxIntensity_perRound, ...
-          allReads_raw, allSpots_raw, allScores_raw, basecsMat_raw, allIntensity_raw, maxIntensity_raw] = ...
+          allReads_raw, allSpots_raw, allScores_raw, basecsMat_raw, allIntensity_raw, maxIntensity_raw, neighborhoodEvidence] = ...
             ExtractFromLocation_stats( input_img, allSpots, voxelSize, q_score_thers, IntensityThresh_perRound, ...
                                        interm_outpath, ref_round, decoding_rounds, showPlots, obj_log )
-    % Extract all candidate rows, then apply quality and all-round sum gates.
+    % Decode the configured volume; gate every round on its same-z 3-by-3 plane.
+    % Neighborhood evidence retains every original candidate row.
 
     validateattributes(voxelSize, {'numeric'}, {'vector', 'numel', 3, 'integer', 'nonnegative', 'finite'});
     validateattributes(q_score_thers, {'numeric'}, {'scalar', 'nonnegative', 'finite'});
@@ -28,6 +29,23 @@ function [allReads, allSpots, allScores, csMat, allIntensity_table, maxIntensity
     allIntensity_table = zeros(Npoint, Nround * 5);
     maxIntensity_perRound = zeros(Npoint, Nround);
 
+    % Column order: round, neighborhood, channel (channel changes fastest).
+    neighborhoodEvidence = struct();
+    neighborhoodEvidence.channel_sum = zeros(Npoint, Nround * 5 * 3, 'single');
+    neighborhoodEvidence.channel_l1 = zeros(Npoint, Nround * 5 * 3, 'single');
+    neighborhoodEvidence.channel_l2 = zeros(Npoint, Nround * 5 * 3, 'single');
+    neighborhoodEvidence.voxel_count = zeros(Npoint, 5, 'uint8');
+    neighborhoodEvidence.zero_signal = false(Npoint, Nround * 5);
+    neighborhoodEvidence.pr_round_signal = zeros(Npoint, Nround, 'single');
+    [delta_y, delta_x, delta_z] = ndgrid(-1:1, -1:1, -1:1);
+    neighborhood_masks = false(3, 3, 3, 5);
+    neighborhood_masks(:, :, :, 1) = delta_x == 0 & delta_y == 0 & delta_z == 0;
+    neighborhood_masks(:, :, :, 2) = delta_z == 0 & abs(delta_x) + abs(delta_y) <= 1;
+    neighborhood_masks(:, :, :, 3) = delta_z == 0;
+    neighborhood_masks(:, :, :, 4) = abs(delta_x) + abs(delta_y) + abs(delta_z) <= 2;
+    neighborhood_masks(:, :, :, 5) = true;
+    reuse_decode_volume = isequal(double(voxelSize(:)'), [1 1 1]);
+
     chunk_size = 4096;
     extraction_timer = tic;
     for chunk_start = 1:chunk_size:Npoint
@@ -36,6 +54,8 @@ function [allReads, allSpots, allScores, csMat, allIntensity_table, maxIntensity
         chunk_count = numel(chunk_indices);
         raw_colors = zeros(chunk_count, Nround, Nchannel);
         center_max = zeros(chunk_count, Nround);
+        neighborhood_sums = zeros(chunk_count, Nround, 5, Nchannel, 'single');
+        neighborhood_counts = zeros(chunk_count, 5, 'uint8');
 
         for local_index = 1:chunk_count
             point_index = chunk_indices(local_index);
@@ -49,6 +69,30 @@ function [allReads, allSpots, allScores, csMat, allIntensity_table, maxIntensity
             raw_colors(local_index, :, :) = reshape(double(color_values), [Nchannel, Nround])';
             currSpot = input_img(curr_p(2), curr_p(1), curr_p(3), :, 1:Nround);
             center_max(local_index, :) = reshape(double(max(currSpot, [], 4)), [Nround, 1])';
+
+            % Fixed-radius diagnostic masks are independent of the decode window.
+            neighbor_cols = GetExtents(curr_p(1), 1, image_cols);
+            neighbor_rows = GetExtents(curr_p(2), 1, image_rows);
+            neighbor_slices = GetExtents(curr_p(3), 1, image_slices);
+            if reuse_decode_volume
+                neighbor_volume = currVol;
+            else
+                neighbor_volume = input_img(neighbor_rows, neighbor_cols, neighbor_slices, :, 1:Nround);
+            end
+            point_masks = neighborhood_masks(neighbor_rows - curr_p(2) + 2, ...
+                neighbor_cols - curr_p(1) + 2, neighbor_slices - curr_p(3) + 2, :);
+            point_masks = reshape(point_masks, [], 5);
+            neighborhood_counts(local_index, :) = uint8(sum(point_masks, 1));
+            neighbor_values = reshape(neighbor_volume, [], Nchannel, Nround);
+            for neighborhood_index = 1:5
+                if neighborhood_index == 5 && reuse_decode_volume
+                    sums = color_values;
+                else
+                    sums = single(sum(neighbor_values(point_masks(:, neighborhood_index), :, :), 1));
+                end
+                neighborhood_sums(local_index, :, neighborhood_index, :) = ...
+                    reshape(reshape(sums, [Nchannel, Nround])', [1, Nround, 1, Nchannel]);
+            end
         end
 
         colorSeq(chunk_indices, :, :) = raw_colors ./ (sqrt(sum(raw_colors.^2, 3)) + 1E-6);
@@ -58,6 +102,25 @@ function [allReads, allSpots, allScores, csMat, allIntensity_table, maxIntensity
         intensity_chunk(:, :, 5) = max(raw_colors, [], 3);
         allIntensity_table(chunk_indices, :) = reshape(permute(intensity_chunk, [1 3 2]), chunk_count, []);
         maxIntensity_perRound(chunk_indices, :) = max(raw_colors, [], 3);
+
+        % Ratios use double arithmetic after the same single-rounded channel sums.
+        ratio_sums = double(neighborhood_sums);
+        total_signal = sum(ratio_sums, 4);
+        zero_signal = total_signal == 0;
+        l1_values = ratio_sums ./ total_signal;
+        l1_values(repmat(zero_signal, [1, 1, 1, Nchannel])) = NaN;
+        l2_values = ratio_sums ./ (sqrt(sum(ratio_sums.^2, 4)) + 1E-6);
+        neighborhoodEvidence.channel_sum(chunk_indices, :) = ...
+            reshape(permute(neighborhood_sums, [1 4 3 2]), chunk_count, []);
+        neighborhoodEvidence.channel_l1(chunk_indices, :) = ...
+            single(reshape(permute(l1_values, [1 4 3 2]), chunk_count, []));
+        neighborhoodEvidence.channel_l2(chunk_indices, :) = ...
+            single(reshape(permute(l2_values, [1 4 3 2]), chunk_count, []));
+        neighborhoodEvidence.voxel_count(chunk_indices, :) = neighborhood_counts;
+        neighborhoodEvidence.zero_signal(chunk_indices, :) = ...
+            reshape(permute(zero_signal, [1 3 2]), chunk_count, []);
+        neighborhoodEvidence.pr_round_signal(chunk_indices, :) = ...
+            max(neighborhood_sums(:, :, 3, :), [], 4);
     end
     fprintf('PHASE_TIMING: color_extraction_seconds=%.2f\n', toc(extraction_timer));
     
@@ -130,10 +193,10 @@ function [allReads, allSpots, allScores, csMat, allIntensity_table, maxIntensity
     toKeep = belowScoreThresh & finiteScores; % points to keep;
     fprintf('DECODING_COUNTS: detected=%d tie_or_invalid_rejected=%d quality_passed=%d\n', ...
             Npoint, sum(~finiteScores), sum(toKeep));
-    fprintf('DECODING_GATE: statistic=max_channel_neighborhood_sum rounds=1:%d threshold=%.15g reference_round=%d center_used=false\n', ...
+    fprintf('DECODING_GATE: statistic=max_channel_neighborhood_sum neighborhood=plane9 nominal_voxels=9 rounds=1:%d threshold=%.15g reference_round=%d center_used=false\n', ...
             Nround, IntensityThresh_perRound, ref_round);
     for round_index = 1:Nround
-        round_pass = maxIntensity_perRound(:, round_index) >= IntensityThresh_perRound;
+        round_pass = neighborhoodEvidence.pr_round_signal(:, round_index) >= IntensityThresh_perRound;
         fprintf('DECODING_ROUND_GATE: round=%d raw_passed=%d raw_total=%d quality_passed=%d quality_total=%d\n', ...
                 round_index, sum(round_pass), Npoint, sum(round_pass & toKeep), sum(toKeep));
     end
@@ -146,7 +209,7 @@ function [allReads, allSpots, allScores, csMat, allIntensity_table, maxIntensity
     
 
     % Every decoded round must pass; center intensity remains diagnostic only.
-    intensity_pass_mask = all(maxIntensity_perRound >= IntensityThresh_perRound, 2);
+    intensity_pass_mask = all(neighborhoodEvidence.pr_round_signal(toKeep, :) >= IntensityThresh_perRound, 2);
 
     % 3. 统计并打印（用于日志核对）
     s = sprintf('%f [%d / %d] percent of reads have intensity at least %f in all %d decoding rounds\n',...

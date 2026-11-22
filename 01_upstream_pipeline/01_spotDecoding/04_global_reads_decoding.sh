@@ -12,8 +12,8 @@ set -euo pipefail
 
 print_usage() {
     echo "Usage: $0 --project_root PATH --project_name NAME --reg_dir_suffix SUFFIX [options]"
-    echo "  --intensityThresh_PR VALUE  Minimum max-channel neighborhood sum in every decoded round (default: 0)."
-    echo "  --save_decode_evidence true  Export tri candidate evidence for threshold studies (default: false)."
+    echo "  --intensityThresh_PR VALUE  Minimum same-z 3x3 max-channel sum in every decoded round (default: 0)."
+    echo "  --save_decode_evidence true  Export tri v2 five-neighborhood evidence for threshold studies (default: false)."
 }
 
 print_slurm_info() {
@@ -174,7 +174,9 @@ echo "DECODING_MODE=${DECODING_MODE}"
 echo "CODEMAP_MODE=${CODEMAP_MODE}"
 echo "LOADING_MODE=${LOADING_MODE}"
 echo "INTENSITY_THRESH_PR=${INTENSITY_THRESH_PR}"
-echo "INTENSITY_FILTER=all_decoded_rounds_max_channel_neighborhood_sum"
+echo "INTENSITY_FILTER=all_decoded_rounds_max_channel_plane9_sum"
+echo "GATING_NEIGHBORHOOD=plane9"
+echo "GATING_NOMINAL_VOXELS=9"
 echo "SAVE_DECODE_EVIDENCE=${SAVE_DECODE_EVIDENCE}"
 echo "VOXELSIZE=${VOXELSIZE}"
 echo "DECODING_ROUNDS=${DECODING_ROUNDS}"

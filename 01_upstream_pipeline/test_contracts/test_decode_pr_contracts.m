@@ -19,6 +19,8 @@ function test_decode_pr_contracts(run_root, candidate_root)
     verify_candidate_rows(candidate_dir, output_dir);
     verify_rectangular_boundaries(candidate_dir, output_dir);
     verify_all_round_gate(candidate_dir, output_dir);
+    verify_neighborhood_evidence(candidate_dir, output_dir);
+    verify_plane9_separation(candidate_dir, output_dir);
     verify_parameter_failures(candidate_dir, output_dir);
     fprintf('STATUS: SUCCESS | test_decode_pr_contracts\n');
     clear cleanup_output restore_path
@@ -31,9 +33,12 @@ function select_source(source_dir)
     assert(strcmp(which('new_GetBaseSeq'), fullfile(source_dir, 'new_GetBaseSeq.m')));
 end
 
-function result = extract(source_dir, image, spots, radius, threshold, rounds, output_dir)
+function result = extract(source_dir, image, spots, radius, threshold, rounds, output_dir, output_count)
     select_source(source_dir);
-    [result{1:12}] = ExtractFromLocation_stats(image, spots, radius, 0.5, threshold, ...
+    if nargin < 8
+        output_count = 13;
+    end
+    [result{1:output_count}] = ExtractFromLocation_stats(image, spots, radius, 0.5, threshold, ...
                                               output_dir, 1, rounds, false, []);
 end
 
@@ -41,7 +46,7 @@ function verify_legacy_baseline(before_dir, candidate_dir, output_dir)
     spots = [1 1 1 10 0 1; 7 8 4 20 0 2; 4 5 2 30 0 1; 4 5 2 31 0 2; 2 7 3 40 0 3];
     for dtype = ["uint8", "uint16"]
         image = cast(randi([0, double(intmax(dtype))], [8 8 4 3 3]), dtype);
-        expected = extract(before_dir, image, spots, [1 1 1], 0, 3, output_dir);
+        expected = extract(before_dir, image, spots, [1 1 1], 0, 3, output_dir, 12);
         actual = extract(candidate_dir, image, spots, [1 1 1], 0, 3, output_dir);
         for output_index = [1:6 8:12]
             assert(isequaln(actual{output_index}, expected{output_index}));
@@ -112,6 +117,11 @@ function verify_candidate_rows(candidate_dir, output_dir)
     assert(isequal(size(empty_result{2}), [0 6]));
     assert(isequal(size(empty_result{7}), [0 1]));
     assert(isequal(size(empty_result{11}), [0 15]));
+    assert(isequal(size(empty_result{13}.channel_sum), [0 45]));
+    assert(isequal(size(empty_result{13}.channel_l1), [0 45]));
+    assert(isequal(size(empty_result{13}.voxel_count), [0 5]));
+    assert(isequal(size(empty_result{13}.zero_signal), [0 15]));
+    assert(isequal(size(empty_result{13}.pr_round_signal), [0 3]));
     fprintf('PR_CONTRACT: candidate_identity_duplicates_chunk_boundary_empty=PASS\n');
 end
 
@@ -127,14 +137,17 @@ function verify_rectangular_boundaries(candidate_dir, output_dir)
     assert(isequal(actual{11}(:, [1 6]), repmat(20, 2, 2)));
     assert(isequal(actual{11}(:, [2 7]), expected_maxima));
     assert(isequal(actual{11}(:, [3 8]), [36 36; 24 24]));
-    cutoff = extract(candidate_dir, image, spots, [1 1 1], 216, 2, output_dir);
-    assert(isequal(cutoff{2}, spots(1, :)));
-    fprintf('PR_CONTRACT: rectangular_xyz_clipping_fixed_sum=PASS\n');
+    assert(isequal(actual{13}.pr_round_signal, single([80 80; 80 80])));
+    cutoff = extract(candidate_dir, image, spots, [1 1 1], 80, 2, output_dir);
+    assert(isequal(cutoff{2}, spots));
+    cutoff = extract(candidate_dir, image, spots, [1 1 1], 81, 2, output_dir);
+    assert(isempty(cutoff{2}));
+    fprintf('PR_CONTRACT: rectangular_xyz_clipping_fixed_plane9_sum=PASS\n');
 end
 
 function verify_all_round_gate(candidate_dir, output_dir)
     image = zeros(7, 23, 3, 3, 11, 'uint16');
-    amounts = [108 216 324 432 540];
+    amounts = [36 72 108 144 180];
     spots = [(4:4:20)' repmat([4 2], 5, 1)];
     for index = 1:5
         image(5, spots(index, 1), 2, 1, :) = amounts(index);
@@ -150,16 +163,84 @@ function verify_all_round_gate(candidate_dir, output_dir)
         previous = expected_keep;
     end
 
-    image(5, 4, 2, 1, 11) = 107;
-    all_rounds = extract(candidate_dir, image, spots, [1 1 1], 108, 11, output_dir);
-    first_ten = extract(candidate_dir, image, spots, [1 1 1], 108, 10, output_dir);
+    image(5, 4, 2, 1, 11) = 35;
+    all_rounds = extract(candidate_dir, image, spots, [1 1 1], 36, 11, output_dir);
+    first_ten = extract(candidate_dir, image, spots, [1 1 1], 36, 10, output_dir);
     assert(isequal(all_rounds{2}, spots(2:5, :)));
     assert(isequal(first_ten{2}, spots));
-    image(5, 8, 2, 1, 4) = 107;
-    internal_failure = extract(candidate_dir, image, spots, [1 1 1], 108, 11, output_dir);
+    image(5, 8, 2, 1, 4) = 35;
+    internal_failure = extract(candidate_dir, image, spots, [1 1 1], 36, 11, output_dir);
     assert(isequal(internal_failure{2}, spots(3:5, :)));
     assert(size(internal_failure{7}, 1) == 5);
     fprintf('PR_CONTRACT: equality_all_rounds_center_diagnostic_monotonicity=PASS\n');
+end
+
+function verify_neighborhood_evidence(candidate_dir, output_dir)
+    % The symmetric 1:27 cube gives hand-computable sums: count times 14.
+    image = zeros(5, 5, 5, 3, 2, 'uint16');
+    cube = reshape(uint16(1:27), 3, 3, 3);
+    for channel = 1:3
+        image(2:4, 2:4, 2:4, channel, 1) = cube .* uint16(channel);
+        image(2:4, 2:4, 2:4, channel, 2) = cube .* uint16(4 - channel);
+    end
+    spots = [3 3 3; 3 3 3];
+    actual = extract(candidate_dir, image, spots, [1 1 1], 0, 2, output_dir);
+    evidence = actual{13};
+    assert(isa(evidence.channel_sum, 'single'));
+    assert(isa(evidence.channel_l1, 'single'));
+    assert(isa(evidence.channel_l2, 'single'));
+    assert(isa(evidence.voxel_count, 'uint8'));
+    assert(islogical(evidence.zero_signal));
+    assert(isequal(evidence.voxel_count, uint8(repmat([1 5 9 19 27], 2, 1))));
+    manual_sums = [14 70 126 266 378];
+    expected = zeros(2, 3, 5, 2, 'single');
+    for neighborhood = 1:5
+        expected(:, :, neighborhood, 1) = repmat(single(manual_sums(neighborhood) * [1 2 3]), 2, 1);
+        expected(:, :, neighborhood, 2) = repmat(single(manual_sums(neighborhood) * [3 2 1]), 2, 1);
+    end
+    assert(isequal(evidence.channel_sum, reshape(expected, 2, [])));
+    assert(isequal(evidence.pr_round_signal, single(repmat([378 378], 2, 1))));
+    expected_double = double(expected);
+    expected_l1 = single(expected_double ./ sum(expected_double, 2));
+    expected_l2 = single(expected_double ./ (sqrt(sum(expected_double.^2, 2)) + 1E-6));
+    assert(isequal(evidence.channel_l1, reshape(expected_l1, 2, [])));
+    assert(isequal(evidence.channel_l2, reshape(expected_l2, 2, [])));
+    assert(~any(evidence.zero_signal, 'all'));
+
+    % Decode radius zero must stay radius zero; evidence still uses five fixed masks.
+    radius_zero = extract(candidate_dir, image, spots, [0 0 0], 0, 2, output_dir);
+    assert(isequal(radius_zero{11}(:, [2 3 4]), repmat([14 28 42], 2, 1)));
+    assert(isequaln(radius_zero{13}, evidence));
+
+    edge_image = ones(3, 3, 3, 3, 2, 'uint16');
+    edge = extract(candidate_dir, edge_image, [1 1 1], [1 1 1], 0, 2, output_dir);
+    assert(isequal(edge{13}.voxel_count, uint8([1 3 4 7 8])));
+    expected_edge = reshape(repmat(single([1 3 4 7 8]), 3, 1), 1, []);
+    assert(isequal(edge{13}.channel_sum, [expected_edge expected_edge]));
+
+    zero_image = zeros(3, 3, 3, 3, 2, 'uint8');
+    zero = extract(candidate_dir, zero_image, [2 2 2], [1 1 1], 0, 2, output_dir);
+    assert(all(zero{13}.channel_sum == 0, 'all'));
+    assert(all(isnan(zero{13}.channel_l1), 'all'));
+    assert(all(zero{13}.channel_l2 == 0, 'all'));
+    assert(all(zero{13}.zero_signal, 'all'));
+    fprintf('PR_CONTRACT: five_masks_ratios_order_counts_zero_independent_decode_window=PASS\n');
+end
+
+function verify_plane9_separation(candidate_dir, output_dir)
+    image = zeros(7, 11, 5, 3, 11, 'uint16');
+    spots = [3 4 3; 8 4 3];
+    % Candidate one: strong upper/lower layers, dark current plane.
+    image(3:5, 2:4, 2, 1, :) = 20;
+    image(3:5, 2:4, 4, 1, :) = 20;
+    % Candidate two: dark center, bright same-plane neighbor at exact threshold.
+    image(4, 9, 3, 2, :) = 36;
+    actual = extract(candidate_dir, image, spots, [1 1 1], 36, 11, output_dir);
+    assert(isequal(actual{2}, spots(2, :)));
+    assert(isequal(actual{12}, repmat([360; 36], 1, 11)));
+    assert(isequal(actual{13}.pr_round_signal, single(repmat([0; 36], 1, 11))));
+    assert(all(actual{11}(:, 1:5:end) == 0, 'all'));
+    fprintf('PR_CONTRACT: upper_lower_signal_excluded_same_plane_neighbor_included=PASS\n');
 end
 
 function verify_parameter_failures(candidate_dir, output_dir)

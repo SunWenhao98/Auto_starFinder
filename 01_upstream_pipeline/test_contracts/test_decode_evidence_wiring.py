@@ -65,8 +65,8 @@ def test_complete_config_preserves_pr_and_evidence_default(tmp_path, evidence_va
     assert not (tmp_path / "decode logs").exists()
 
 
-@pytest.mark.parametrize("evidence_value", [None, "TrUe"])
-def test_wrapper_passes_matlab_logical_and_pr(tmp_path, evidence_value):
+@pytest.mark.parametrize("evidence_value,pr", [(None, None), (None, "72"), ("TrUe", "72")])
+def test_wrapper_passes_matlab_logical_and_pr(tmp_path, evidence_value, pr):
     project_root = tmp_path / "project root"
     position = project_root / "StudySample" / "01_data" / "round001" / "Position003"
     position.mkdir(parents=True)
@@ -107,8 +107,9 @@ def test_wrapper_passes_matlab_logical_and_pr(tmp_path, evidence_value):
         "--project_name", "StudySample",
         "--reg_dir_suffix", "_evidence",
         "--core_matlab_dir", str(SOURCE_ROOT / "core_programs"),
-        "--intensityThresh_PR", "324",
     ]
+    if pr is not None:
+        arguments += ["--intensityThresh_PR", pr]
     if evidence_value is not None:
         arguments += ["--save_decode_evidence", evidence_value]
     result = subprocess.run(arguments, env=environment, cwd=tmp_path,
@@ -117,7 +118,8 @@ def test_wrapper_passes_matlab_logical_and_pr(tmp_path, evidence_value):
     captured = capture_path.read_text(encoding="utf-8").splitlines()
     assert captured[0] == "-batch"
     assert len(captured) == 2
-    assert "'IntensityThresh_perRound', 324" in captured[1]
+    assert f"'IntensityThresh_perRound', {pr or 0}" in captured[1]
+    assert "'voxel_size', [1,1,1]" in captured[1]
     logical = "true" if evidence_value is not None else "false"
     assert f"'save_decode_evidence', {logical}" in captured[1]
     assert "'global_reads_decoding', 'Position003'" in captured[1]

@@ -69,7 +69,7 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
     defaultradius = 8;
     defaultGlobalRegistrationMode = 1;
     defaultLoadingMode = "local_registration";
-    defaultIntensityThresh_perRound = 270;  % Every decoded round: max channel neighborhood sum.
+    defaultIntensityThresh_perRound = 0;  % Every decoded round: same-z 3x3 max-channel sum.
     defaulterode = 1;
     defaulttransform = 1;
     defaultfsize = [5 5 3];
@@ -514,7 +514,7 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
 
         if p.Results.save_decode_evidence
             assert(strcmp(p.Results.barcode_mode, 'tri'), 'Decode evidence currently supports tri decoding.');
-            evidence_dir = fullfile(curr_out_path, sprintf('decode_evidence_%s_%g_%s_PR%g', ...
+            evidence_dir = fullfile(curr_out_path, sprintf('decode_evidence_v2_plane9_%s_%g_%s_PR%g', ...
                 p.Results.spotfinding_method, p.Results.intensity_threshold, ...
                 p.Results.barcode_mode, p.Results.IntensityThresh_perRound));
             assert(~isfolder(evidence_dir) && ~isfile(evidence_dir), ...

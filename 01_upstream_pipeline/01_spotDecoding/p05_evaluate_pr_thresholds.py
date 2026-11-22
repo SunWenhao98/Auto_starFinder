@@ -18,7 +18,11 @@ import numpy as np
 from scipy import stats
 
 
-DEFAULT_THRESHOLDS = (0, 108, 216, 324, 432, 540)
+NEIGHBORHOODS = ("center1", "cross5", "plane9", "volume19", "volume27")
+NOMINAL_VOXELS = (1, 5, 9, 19, 27)
+DEFAULT_MU = (0, 5, 10, 15, 20, 25)
+DEFAULT_THRESHOLDS = tuple(mu * 9 * 0.8 for mu in DEFAULT_MU)
+DEFAULT_VOLUME27_THRESHOLDS = tuple(mu * 27 * 0.8 for mu in DEFAULT_MU)
 
 
 def write_table(path, rows, fieldnames):
@@ -55,10 +59,17 @@ def evidence_shape(dataset):
     return dataset.shape
 
 
-def evaluate(evidence_dir, output_dir, thresholds=DEFAULT_THRESHOLDS, chunk_size=65536):
+def evaluate(evidence_dir, output_dir, thresholds=None, chunk_size=65536,
+             intensity_neighborhood="plane9"):
     evidence_dir = Path(evidence_dir).resolve()
     output_dir = Path(output_dir).absolute()
+    if intensity_neighborhood not in ("plane9", "volume27"):
+        raise ValueError("intensity_neighborhood must be plane9 or volume27")
+    nominal_voxels = 9 if intensity_neighborhood == "plane9" else 27
+    if thresholds is None:
+        thresholds = [mu * nominal_voxels * 0.8 for mu in DEFAULT_MU]
     thresholds = sorted(set(float(value) for value in thresholds))
+    mus = [value / (nominal_voxels * 0.8) for value in thresholds]
     if not thresholds or not all(np.isfinite(value) and value >= 0 for value in thresholds):
         raise ValueError("Thresholds must be finite nonnegative intensities")
     if chunk_size < 1:
@@ -68,8 +79,18 @@ def evaluate(evidence_dir, output_dir, thresholds=DEFAULT_THRESHOLDS, chunk_size
 
     with (evidence_dir / "metadata.json").open() as handle:
         metadata = json.load(handle)
-    if metadata["schema_version"] != 1:
+    schema_version = metadata["schema_version"]
+    if schema_version not in (1, 2):
         raise ValueError("Unsupported evidence schema")
+    if schema_version == 1 and intensity_neighborhood != "volume27":
+        raise ValueError("Schema v1 has no plane9 evidence; explicitly select volume27 for legacy replay")
+    if schema_version == 1 and tuple(metadata["voxel_size"]) != (1, 1, 1):
+        raise ValueError("Schema v1 volume27 replay requires the original 3-by-3-by-3 decoding window")
+    if schema_version == 2:
+        if (tuple(metadata["neighborhood_order"]) != NEIGHBORHOODS
+                or metadata["neighborhood_column_order"] != "round,neighborhood,channel"
+                or tuple(metadata["neighborhood_nominal_voxels"]) != NOMINAL_VOXELS):
+            raise ValueError("Unsupported neighborhood ordering or nominal voxel counts")
     rounds = int(metadata["decoding_rounds"])
     genes = metadata["codebook_genes"]
     if rounds < 1 or not isinstance(genes, list) or not genes:
@@ -95,6 +116,13 @@ def evaluate(evidence_dir, output_dir, thresholds=DEFAULT_THRESHOLDS, chunk_size
         expected_widths = {"candidate_id": 1, "spots": 6, "intensity": 5 * rounds,
                            "scores": rounds, "color_index": rounds, "quality_pass": 1,
                            "intensity_pass": 1, "codebook_index": 1, "neighbor_voxel_count": 1}
+        if schema_version == 2:
+            expected_widths.update({"neighborhood_channel_sum": rounds * 5 * 3,
+                                    "neighborhood_channel_l1": rounds * 5 * 3,
+                                    "neighborhood_channel_l2": rounds * 5 * 3,
+                                    "neighborhood_voxel_count": 5,
+                                    "neighborhood_zero_signal": rounds * 5,
+                                    "pr_round_signal": rounds})
         for key, width in expected_widths.items():
             shape = evidence_shape(evidence[key])
             if shape != (width, n_candidates):
@@ -125,6 +153,23 @@ def evaluate(evidence_dir, output_dir, thresholds=DEFAULT_THRESHOLDS, chunk_size
         center_sums = np.zeros(rounds)
         volume_sums = np.zeros(rounds)
         mean_voxel_sums = np.zeros(rounds)
+        available_neighborhoods = NEIGHBORHOODS if schema_version == 2 else ("volume27",)
+        n_neighborhoods = len(available_neighborhoods)
+        sum_totals = np.zeros((rounds, n_neighborhoods, 3))
+        l1_totals = np.zeros_like(sum_totals)
+        l2_totals = np.zeros_like(sum_totals)
+        nonzero_counts = np.zeros((rounds, n_neighborhoods), dtype=np.int64)
+        zero_counts = np.zeros_like(nonzero_counts)
+        tie_counts = np.zeros_like(nonzero_counts)
+        winner_counts = np.zeros((rounds, n_neighborhoods, 3), dtype=np.int64)
+        top1_totals = np.zeros((rounds, n_neighborhoods))
+        gap_totals = np.zeros_like(top1_totals)
+        neighborhood_voxel_min = np.full(n_neighborhoods, np.inf)
+        neighborhood_voxel_max = np.zeros(n_neighborhoods)
+        agreement_counts = np.zeros((rounds, 3), dtype=np.int64)
+        outer_layer_sums = np.zeros((rounds, 3))
+        same_mu_counts = np.zeros((len(thresholds), 4, 3), dtype=np.int64)
+        baseline_code_counts = np.zeros(len(genes), dtype=np.int64)
         extraction_intensity_count = 0
         quality_count = 0
         matched_count = 0
@@ -158,18 +203,75 @@ def evaluate(evidence_dir, output_dir, thresholds=DEFAULT_THRESHOLDS, chunk_size
             if not np.all(np.isfinite(neighbors)) or np.any(neighbors <= 0):
                 raise ValueError("neighbor_voxel_count must be positive and finite")
 
-            round_signal = np.max(intensities[:, :, 1:4], axis=2)
+            if schema_version == 2:
+                channel_sums = evidence["neighborhood_channel_sum"][:, start:end].T.reshape(-1, rounds, 5, 3)
+                l1 = evidence["neighborhood_channel_l1"][:, start:end].T.reshape(-1, rounds, 5, 3)
+                l2 = evidence["neighborhood_channel_l2"][:, start:end].T.reshape(-1, rounds, 5, 3)
+                voxel_counts = evidence["neighborhood_voxel_count"][:, start:end].T
+                zero_signal = evidence["neighborhood_zero_signal"][:, start:end].T.reshape(-1, rounds, 5).astype(bool)
+                if (not np.all(np.isfinite(channel_sums)) or np.any(channel_sums < 0)
+                        or not np.all(np.isfinite(l2))
+                        or np.any(~np.isfinite(l1) & ~zero_signal[:, :, :, None])
+                        or np.any(np.isinf(l1))
+                        or not np.all(np.isnan(l1[zero_signal]))
+                        or not np.array_equal(zero_signal, np.all(channel_sums == 0, axis=3))):
+                    raise ValueError("Neighborhood ratios must be finite except L1 NaN at zero-signal neighborhoods")
+                if (np.any(voxel_counts <= 0)
+                        or np.any(voxel_counts > np.array(NOMINAL_VOXELS)[None, :])):
+                    raise ValueError("Invalid actual neighborhood voxel counts")
+                plane9_signal = np.max(channel_sums[:, :, 2, :], axis=2)
+                volume27_signal = np.max(channel_sums[:, :, 4, :], axis=2)
+                cached_pr_signal = evidence["pr_round_signal"][:, start:end].T
+                if not np.array_equal(cached_pr_signal, plane9_signal):
+                    raise ValueError("pr_round_signal must equal the plane9 maximum channel sum")
+                round_signal = plane9_signal if intensity_neighborhood == "plane9" else volume27_signal
+                selected_neighbors = voxel_counts[:, 2 if intensity_neighborhood == "plane9" else 4]
+                outer_layer_sums += (channel_sums[:, :, 4, :] - channel_sums[:, :, 2, :]).sum(axis=0)
+            else:
+                channel_sums = intensities[:, :, None, 1:4]
+                totals = channel_sums.sum(axis=3, keepdims=True)
+                zero_signal = totals[:, :, :, 0] == 0
+                l1 = np.divide(channel_sums, totals, out=np.full_like(channel_sums, np.nan), where=totals != 0)
+                l2 = channel_sums / (np.sqrt(np.square(channel_sums).sum(axis=3, keepdims=True)) + 1e-6)
+                voxel_counts = neighbors[:, None]
+                round_signal = np.max(channel_sums[:, :, 0, :], axis=2)
+                selected_neighbors = neighbors
+            if np.any(channel_sums < 0):
+                raise ValueError("Raw neighborhood sums must be nonnegative")
+            channel_max = channel_sums.max(axis=3)
+            winner_mask = channel_sums == channel_max[:, :, :, None]
+            unique_winner = (winner_mask.sum(axis=3) == 1) & ~zero_signal
+            winners = np.argmax(channel_sums, axis=3)
+            sum_totals += channel_sums.sum(axis=0, dtype=np.float64)
+            l1_totals += np.where(zero_signal[:, :, :, None], 0, l1).sum(axis=0, dtype=np.float64)
+            l2_totals += l2.sum(axis=0, dtype=np.float64)
+            nonzero_counts += (~zero_signal).sum(axis=0)
+            zero_counts += zero_signal.sum(axis=0)
+            tie_counts += (~zero_signal & ~unique_winner).sum(axis=0)
+            for channel in range(3):
+                winner_counts[:, :, channel] += (unique_winner & (winners == channel)).sum(axis=0)
+            sorted_l1 = np.sort(np.where(zero_signal[:, :, :, None], 0, l1), axis=3)
+            top1_totals += sorted_l1[:, :, :, -1].sum(axis=0, dtype=np.float64)
+            gap_totals += (sorted_l1[:, :, :, -1] - sorted_l1[:, :, :, -2]).sum(axis=0, dtype=np.float64)
+            neighborhood_voxel_min = np.minimum(neighborhood_voxel_min, voxel_counts.min(axis=0))
+            neighborhood_voxel_max = np.maximum(neighborhood_voxel_max, voxel_counts.max(axis=0))
+            if schema_version == 2:
+                both_unique = unique_winner[:, :, 2] & unique_winner[:, :, 4]
+                agree = both_unique & (winners[:, :, 2] == winners[:, :, 4])
+                agreement_counts += np.stack((both_unique.sum(axis=0), agree.sum(axis=0),
+                                              (both_unique & ~agree).sum(axis=0)), axis=1)
             min_signal = np.min(round_signal, axis=1)
             matched = code_indices > 0
             quality_count += int(quality.sum())
             matched_count += int(matched.sum())
+            baseline_code_counts += np.bincount(code_indices[quality & matched] - 1, minlength=len(genes))
             extraction_intensity_count += int(evidence["intensity_pass"][0, start:end].astype(bool).sum())
             center_sums += intensities[:, :, 0].sum(axis=0)
             volume_sums += round_signal.sum(axis=0)
-            mean_voxel_sums += (round_signal / neighbors[:, None]).sum(axis=0)
+            mean_voxel_sums += (round_signal / selected_neighbors[:, None]).sum(axis=0)
             limiting_round_counts += (round_signal == min_signal[:, None]).sum(axis=0)
-            neighbor_min = min(float(neighbors.min()), neighbor_min) if neighbor_min is not None else float(neighbors.min())
-            neighbor_max = max(float(neighbors.max()), neighbor_max) if neighbor_max is not None else float(neighbors.max())
+            neighbor_min = min(float(selected_neighbors.min()), neighbor_min) if neighbor_min is not None else float(selected_neighbors.min())
+            neighbor_max = max(float(selected_neighbors.max()), neighbor_max) if neighbor_max is not None else float(selected_neighbors.max())
             quality_signal = np.where(quality, min_signal, -np.inf)
             decoded_signal = np.where(quality & matched, min_signal, -np.inf)
             unique.executemany(merge_xyz, ((float(point[0]), float(point[1]), float(point[2]),
@@ -193,17 +295,26 @@ def evaluate(evidence_dir, output_dir, thresholds=DEFAULT_THRESHOLDS, chunk_size
                 count_arrays[index] += np.bincount(code_indices[chosen] - 1, minlength=len(genes))
                 writer.writerows((int(candidate_ids[row]), *spots[row, :4].tolist(),
                                   float(spots[row, 5]), genes[code_indices[row] - 1]) for row in chosen)
+                if schema_version == 2:
+                    pass9 = np.all(plane9_signal >= mus[index] * 9 * 0.8, axis=1)
+                    pass27 = np.all(volume27_signal >= mus[index] * 27 * 0.8, axis=1)
+                    groups = (pass9 & pass27, pass9 & ~pass27, ~pass9 & pass27, ~pass9 & ~pass27)
+                    for group_index, group in enumerate(groups):
+                        same_mu_counts[index, group_index] += [int(group.sum()), int((group & quality).sum()),
+                                                               int((group & quality & matched).sum())]
             print(f"READ: {end}/{n_candidates} candidate records", flush=True)
 
         n_unique = unique.execute("SELECT count(*) FROM xyz").fetchone()[0]
         summaries = []
         total_vectors = []
         common_metadata = {
-            "schema_version": 1, "evidence_dir": str(evidence_dir),
+            "schema_version": 2, "evidence_dir": str(evidence_dir),
             "source_evidence_mat": str(evidence_dir / "evidence.mat"),
             "source_evidence_metadata": str(evidence_dir / "metadata.json"),
             "evidence_metadata": metadata,
-            "intensity_criterion": "all rounds: max(ch1sum, ch2sum, ch3sum) >= threshold",
+            "intensity_neighborhood": intensity_neighborhood,
+            "nominal_voxels": nominal_voxels, "threshold_scale": 0.8,
+            "intensity_criterion": "all rounds: selected-neighborhood max(ch1sum, ch2sum, ch3sum) >= threshold",
             "quality_criterion": "cache quality_pass; scores are not reinterpreted",
             "final_criterion": "intensity_pass & quality_pass & (codebook_index > 0)",
             "extraction_intensity_pass_used_as_filter": False,
@@ -212,6 +323,11 @@ def evaluate(evidence_dir, output_dir, thresholds=DEFAULT_THRESHOLDS, chunk_size
             "neighbor_voxel_count_min": neighbor_min, "neighbor_voxel_count_max": neighbor_max,
             "center_intensity_usage": "diagnostic only",
             "minimum_round_ties": "each tied round counted, so totals may exceed candidate count",
+            "neighborhood_statistics_available": list(available_neighborhoods),
+            "ratio_summary_population": "all candidate records; L1/top1/gap means exclude zero signal; S/L2 means include zero signal",
+            "winner_policy": "zero signal and positive ties reported separately; winner agreement requires both unique nonzero winners",
+            "comparison_policy": "plane9 and volume27 at the same mu; fixed quality_pass and codebook_index",
+            "same_mu_decoded_records_definition": "within each candidate group, quality_pass & (codebook_index > 0), before either intensity gate",
         }
         for index, threshold in enumerate(thresholds):
             folder = output_dir / threshold_label(threshold)
@@ -222,6 +338,8 @@ def evaluate(evidence_dir, output_dir, thresholds=DEFAULT_THRESHOLDS, chunk_size
             intensity_n, quality_intensity_n, final_n = (int(value) for value in stage_counts[index])
             summary = {
                 "sample": metadata["sample"], "position": metadata["position"], "threshold": threshold,
+                "intensity_neighborhood": intensity_neighborhood, "nominal_voxels": nominal_voxels,
+                "mu": mus[index],
                 "n_candidate_records": n_candidates, "n_candidate_unique_xyz": n_unique,
                 "n_quality_pass_records": quality_count, "n_codebook_matched_records": matched_count,
                 "n_extraction_intensity_pass_records": extraction_intensity_count,
@@ -261,17 +379,69 @@ def evaluate(evidence_dir, output_dir, thresholds=DEFAULT_THRESHOLDS, chunk_size
                          for number, value in enumerate(failure_distributions[index])),
                         ["n_failed_rounds", "candidate_records"])
             write_json(folder / "summary.json", summary)
-            write_json(folder / "metadata.json", {**common_metadata, "threshold": threshold})
+            write_json(folder / "metadata.json", {**common_metadata, "threshold": threshold, "mu": mus[index]})
         write_table(output_dir / "summary.csv", summaries, list(summaries[0]))
 
+        channel_rows = []
+        neighborhood_rows = []
+        for round_index in range(rounds):
+            for neighborhood_index, neighborhood in enumerate(available_neighborhoods):
+                positive_n = int(nonzero_counts[round_index, neighborhood_index])
+                for channel in range(3):
+                    channel_rows.append({
+                        "round": round_index + 1, "neighborhood": neighborhood, "channel": channel + 1,
+                        "n_candidate_records": n_candidates, "n_nonzero_records": positive_n,
+                        "mean_channel_sum": ratio(float(sum_totals[round_index, neighborhood_index, channel]), n_candidates),
+                        "mean_l1_nonzero": ratio(float(l1_totals[round_index, neighborhood_index, channel]), positive_n),
+                        "mean_l2": ratio(float(l2_totals[round_index, neighborhood_index, channel]), n_candidates),
+                    })
+                neighborhood_rows.append({
+                    "round": round_index + 1, "neighborhood": neighborhood,
+                    "nominal_voxels": NOMINAL_VOXELS[NEIGHBORHOODS.index(neighborhood)],
+                    "actual_voxels_min": int(neighborhood_voxel_min[neighborhood_index]) if n_candidates else None,
+                    "actual_voxels_max": int(neighborhood_voxel_max[neighborhood_index]) if n_candidates else None,
+                    "n_candidate_records": n_candidates, "n_nonzero_records": positive_n,
+                    "n_zero_signal_records": int(zero_counts[round_index, neighborhood_index]),
+                    "n_positive_tie_records": int(tie_counts[round_index, neighborhood_index]),
+                    "n_unique_winner_ch1": int(winner_counts[round_index, neighborhood_index, 0]),
+                    "n_unique_winner_ch2": int(winner_counts[round_index, neighborhood_index, 1]),
+                    "n_unique_winner_ch3": int(winner_counts[round_index, neighborhood_index, 2]),
+                    "mean_top1_l1_nonzero": ratio(float(top1_totals[round_index, neighborhood_index]), positive_n),
+                    "mean_top1_minus_top2_l1_nonzero": ratio(float(gap_totals[round_index, neighborhood_index]), positive_n),
+                })
+        write_table(output_dir / "neighborhood_channel_summary.csv", channel_rows, list(channel_rows[0]))
+        write_table(output_dir / "neighborhood_round_summary.csv", neighborhood_rows, list(neighborhood_rows[0]))
+        if schema_version == 2:
+            agreement_rows = [{
+                "round": number + 1, "n_candidate_records": n_candidates,
+                "n_both_unique_nonzero_winners": int(agreement_counts[number, 0]),
+                "n_agree_unique_winners": int(agreement_counts[number, 1]),
+                "n_disagree_unique_winners": int(agreement_counts[number, 2]),
+                "winner_agreement_rate": ratio(int(agreement_counts[number, 1]), int(agreement_counts[number, 0])),
+                **{f"mean_volume27_minus_plane9_ch{channel + 1}_sum": ratio(float(outer_layer_sums[number, channel]), n_candidates)
+                   for channel in range(3)},
+            } for number in range(rounds)]
+            write_table(output_dir / "plane9_volume27_round_comparison.csv", agreement_rows, list(agreement_rows[0]))
+            same_mu_rows = [{
+                "mu": mu, "plane9_threshold": mu * 9 * 0.8, "volume27_threshold": mu * 27 * 0.8,
+                "group": group, "n_candidate_records": int(same_mu_counts[index, group_index, 0]),
+                "n_quality_pass_records": int(same_mu_counts[index, group_index, 1]),
+                "n_decoded_records": int(same_mu_counts[index, group_index, 2]),
+            } for index, mu in enumerate(mus)
+                for group_index, group in enumerate(("both_pass", "plane9_only", "volume27_only", "neither_pass"))]
+            write_table(output_dir / "same_mu_neighborhood_groups.csv", same_mu_rows, list(same_mu_rows[0]))
+
         comparisons = []
-        baseline = np.log2(total_vectors[0] + 1)
+        baseline_total_counts = np.zeros(len(total_genes), dtype=np.int64)
+        np.add.at(baseline_total_counts, code_to_total, baseline_code_counts)
+        baseline = np.log2(baseline_total_counts + 1)
         for threshold, counts in zip(thresholds, total_vectors):
             values = np.log2(counts + 1)
             variable = len(values) >= 2 and np.ptp(baseline) > 0 and np.ptp(values) > 0
             for method, function in (("pearson", stats.pearsonr), ("spearman", stats.spearmanr)):
                 correlation = float(function(baseline, values).statistic) if variable else None
-                comparisons.append({"baseline_threshold": thresholds[0], "threshold": threshold,
+                comparisons.append({"baseline_threshold": 0, "threshold": threshold,
+                                    "intensity_neighborhood": intensity_neighborhood, "mu": threshold / (nominal_voxels * 0.8),
                                     "method": method, "n_genes": len(total_genes), "correlation": correlation,
                                     "transform": "log2(totalRNA_count+1)",
                                     "scope": "fixed codebook totalRNA genes including zeros"})
@@ -287,7 +457,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence_dir", required=True, type=Path)
     parser.add_argument("--output_dir", required=True, type=Path)
-    parser.add_argument("--thresholds", nargs="+", type=float, default=list(DEFAULT_THRESHOLDS))
+    parser.add_argument("--thresholds", nargs="+", type=float, default=None,
+                        help="Actual channel-sum thresholds; omitted uses mu=0/5/10/15/20/25 for the selected neighborhood")
+    parser.add_argument("--intensity_neighborhood", choices=("plane9", "volume27"), default="plane9")
     parser.add_argument("--chunk_size", type=int, default=65536)
     args = parser.parse_args()
-    evaluate(args.evidence_dir, args.output_dir, args.thresholds, args.chunk_size)
+    evaluate(args.evidence_dir, args.output_dir, args.thresholds, args.chunk_size, args.intensity_neighborhood)
