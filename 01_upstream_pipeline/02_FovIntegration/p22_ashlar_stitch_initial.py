@@ -4,7 +4,7 @@ import sys
 
 import numpy as np
 import pandas as pd
-import skimage.io
+import tifffile
 from ashlar import reg
 from ashlar.reg import EdgeAligner, Mosaic, PyramidWriter
 
@@ -29,7 +29,7 @@ def parse_slice_indices(spec):
 
 
 class TiffTxtReader(reg.PlateReader):
-    """Reader for TileConfiguration-style coordinates and per-tile TIFF files."""
+    """Read single-channel YX TIFFs or ZYX grayscale stacks with tile coordinates."""
 
     def __init__(
         self,
@@ -53,7 +53,7 @@ class TiffTxtReader(reg.PlateReader):
 
         first_file = os.path.join(self.path, self.coords_data[0]["filename"])
         try:
-            img = skimage.io.imread(first_file)
+            img = tifffile.imread(first_file)
             print(f"[Init] Detecting info from: {os.path.basename(first_file)}")
             print(f"[Init] Raw Shape: {img.shape}")
             print(f"[Init] Dtype: {img.dtype}")
@@ -138,7 +138,7 @@ class TiffTxtReader(reg.PlateReader):
     def read(self, series, c):
         fname = self.coords_data[series]["filename"]
         full_path = os.path.join(self.path, fname)
-        img = skimage.io.imread(full_path)
+        img = tifffile.imread(full_path)
 
         if self.mode == "mip":
             if img.ndim == 3:

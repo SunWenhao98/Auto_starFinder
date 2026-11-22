@@ -82,7 +82,7 @@ class JointThreeRoundContracts(unittest.TestCase):
     def require_success(self, result):
         self.assertEqual(result.returncode, 0, (result.stdout + result.stderr)[-6000:])
 
-    def prepare_rounds(self, selections, shifts=None, rotations=None, blank=None):
+    def prepare_rounds(self, selections, shifts=None, rotations=None, blank=None, stack_depth=None):
         scene = textured_scene()
         shifts = shifts or {name: (0, 0) for name in selections}
         rotations = rotations or {}
@@ -105,6 +105,9 @@ class JointThreeRoundContracts(unittest.TestCase):
                 tile = image[y:y + TILE_SIZE, x:x + TILE_SIZE]
                 if round_name == blank:
                     tile = np.zeros_like(tile)
+                if stack_depth is not None:
+                    # Distinct Z planes retain the original scene as their MIP.
+                    tile = np.stack([tile // divisor for divisor in range(stack_depth, 0, -1)])
                 tifffile.imwrite(directory / name, tile, photometric="minisblack")
                 actual[round_name][name] = np.array([y, x], dtype=float)
         return directories, configs, actual
@@ -180,6 +183,47 @@ class JointThreeRoundContracts(unittest.TestCase):
         repeated = self.run_cli("p32_ashlar_stitch_mosaic_joint.py", mosaic_arguments["seqE"])
         self.assertNotEqual(repeated.returncode, 0)
         self.assertEqual({path: path.read_bytes() for path in image_bytes}, image_bytes)
+
+    def test_three_plane_gray_stacks_recover_positions_and_render_one_canvas(self):
+        names = [list(NOMINAL)[i] for i in (0, 1, 3, 4)]
+        shifts = {"ref": (0, 0), "IF": (16, -16), "seqE": (-16, 16)}
+        directories, configs, actual = self.prepare_rounds(
+            {name: names for name in shifts}, shifts=shifts, stack_depth=3,
+        )
+        scene = textured_scene()
+        with tifffile.TiffFile(directories["ref"] / names[0]) as image:
+            self.assertEqual(len(image.pages), 3)
+            volume = image.asarray()
+        self.assertEqual(volume.shape, (3, TILE_SIZE, TILE_SIZE))
+        self.assertFalse(np.array_equal(volume[0], volume[-1]))
+        y, x = NOMINAL[names[0]]
+        np.testing.assert_array_equal(volume.max(axis=0), scene[y:y + TILE_SIZE, x:x + TILE_SIZE])
+
+        self.require_success(self.run_cli("p31_ashlar_stitch_joint.py", self.joint_arguments(directories, configs)))
+        summary_path = self.work / "joint/three_rounds_summary.json"
+        summary = json.loads(summary_path.read_text())
+        solved = {
+            name: read_config(Path(summary["rounds"][name]["tile_config"]))
+            for name in shifts
+        }
+        anchor = names[0]
+        for round_name in shifts:
+            self.assertEqual(list(solved[round_name]), names)
+            for name in names:
+                observed = solved[round_name][name] - solved["ref"][anchor]
+                expected = actual[round_name][name] - actual["ref"][anchor]
+                np.testing.assert_allclose(observed, expected, atol=1.0)
+
+        positions = np.vstack([list(values.values()) for values in actual.values()])
+        origin = positions.min(axis=0)
+        expected_shape = positions.max(axis=0) + TILE_SIZE - origin
+        np.testing.assert_allclose(summary["canvas_shape_yx"], expected_shape, atol=2.0)
+        _, _, images = self.render_rounds(directories, summary_path, summary)
+        expected_peak = np.array(np.unravel_index(scene.argmax(), scene.shape)) - origin
+        for name, image in images.items():
+            observed_peak = np.array(np.unravel_index(image.argmax(), image.shape))
+            self.assertLessEqual(np.linalg.norm(observed_peak - expected_peak), 2.0, name)
+            self.assertEqual(image.dtype, np.uint16)
 
     def test_round_without_cross_round_image_evidence_fails(self):
         names = [list(NOMINAL)[i] for i in (0, 1, 3, 4)]

@@ -97,11 +97,17 @@ seqE 的 11a/23 调用使用自己的 moving_round、日志 tag、输出坐标�
 
 Ashlar 的对应参数为 `ashlar_stitch_initial_source_channel_dir` 和 `ashlar_stitch_mosaic_channel_dir_prefix`。31/32 使用 `ref/raw-refDAPI`、`IF/raw-`、`seqE/raw-` 的同一布局。
 
-## 已知的少层 TIFF 读取限制
+## 灰度 TIFF 的读取约定
 
-现有 Ashlar reader 对 3 页灰度 TIFF 存在轴解释问题。验收中，skimage 将实体源文件和它的文件链接都读为 YXC，当前 22/24 的 ZYX 假设会得到错误画布。tifffile 能保留其 ZYX 结构。该问题属于既有 reader 行为，需另行修订 reader。
+22、24、30 的首图尺寸识别与实际读图统一使用 `tifffile.imread()`；31 复用 30 的 reader，32 原本已使用同一 TIFF API。输入沿用逐通道文件约定：二维数组为 `Y,X`，多页灰度堆栈为 `Z,Y,X`。普通多页 TIFF 的元数据也可能标为 `QYX`，不能要求轴标签必须等于 `ZYX`。
 
-本轮真实 Fiji/Ashlar 链的通过范围为 5 层合成输入。真实源链接读取检查使用 45 层图像。11a 的单层与 5 层 MATLAB 契约均已通过。
+读取本身保留原位深，24/32 仍按显式 `output_format` 执行既有位深转换。MIP 沿第 0 轴投影，`slice_index` 按 1-based Z 层选择，stack 的 `read(series, c)` 中 c 为 0-based Z 索引，对应第 c+1 层；取出二维平面后再按既有设置旋转。这里修正读取方式，坐标单位、原点换算、配准算法及 CLI 均保持原样。
+
+旧 `skimage.io.imread()` 会将某些 3/4 页堆栈自动换成通道在末尾的数组，导致错误的 tile 尺寸、投影、画布，也可能影响配准坐标。文件软链接与实体文件均会触发该旧行为。当前直接读取 TIFF，不再经过这一换轴步骤。
+
+回归入口为 `test_contracts/test_ashlar_tiff_readers.py` 与 `test_contracts/test_joint_three_round_contracts.py`。前者使用非正方形小图覆盖二维、3/4/5/45 层、uint8/uint16、MIP/指定层/stack 像素及顺时针旋转；后者保留二维测试并增加三轮 3 页真实 TIFF/CLI 的坐标、共同画布及地标叠加检查。reader 的 stack 逐层读取检查不等于导出 OME-TIFF 的 C/Z 元数据验收。
+
+前轮 11a/11b 布局验收的 Fiji/Ashlar 完整链通过范围为 5 层合成输入，真实源链接读取检查为 45 层；这些历史记录保留原范围。本次少层 reader 修复另用全新测试目录验收，不覆盖旧拼图或坐标。
 
 ## TileConfiguration 与 23 的契约
 

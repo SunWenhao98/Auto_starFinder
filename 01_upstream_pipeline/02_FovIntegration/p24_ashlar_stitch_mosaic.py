@@ -56,7 +56,7 @@ if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
     build_parser().parse_args()
 
 import numpy as np
-import skimage.io
+import tifffile
 from ashlar import reg
 from ashlar.reg import Mosaic, PyramidWriter
 
@@ -134,7 +134,7 @@ def _replace_channel_path(fname, channel_from, channel_to):
 
 
 class TiffDirectReader(reg.PlateReader):
-    """Reader that exposes TileConfiguration coordinates to Ashlar's Mosaic."""
+    """Read single-channel YX TIFFs or ZYX grayscale stacks at fixed coordinates."""
 
     def __init__(
         self,
@@ -162,7 +162,7 @@ class TiffDirectReader(reg.PlateReader):
 
         first_file = os.path.join(self.path, self.coords_data[0]["filename"])
         try:
-            img = skimage.io.imread(first_file)
+            img = tifffile.imread(first_file)
             print(f"[DirectReader] First file: {os.path.basename(first_file)}")
             print(f"[DirectReader] Raw Shape: {img.shape}, Detected input dtype: {img.dtype}")
             print(f"[DirectReader] Stitch output_format: {self.output_format}")
@@ -249,7 +249,7 @@ class TiffDirectReader(reg.PlateReader):
     def read(self, series, c):
         fname = self.coords_data[series]["filename"]
         full_path = os.path.join(self.path, fname)
-        img = skimage.io.imread(full_path)
+        img = tifffile.imread(full_path)
 
         if self.mode == "mip":
             if img.ndim == 3:

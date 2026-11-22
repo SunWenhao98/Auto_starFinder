@@ -26,7 +26,9 @@ new_joint_workdir/
   seqE/TileConfiguration.initial.txt
 ```
 
-`21` 的 IF 和 seqE 模式都会生成 `raw-DAPI`，因此两轮必须放在不同子目录。保留原始位深时，准备与出图都应选择 `preserve`；已转为 uint8 的输入无法通过后续转回 uint16 恢复精度。准备不同轮次通常需多个 JOB/分阶段生成，现有 generator 每个 JOB 每一步只调用一次，不能只打开开关就自动准备三轮。
+`11b` 的 IF 和 seqE 模式都会生成 `raw-DAPI`，因此两轮分别使用独立子目录。三轮布局可通过 `11b` 的 `round_manifest` 一次准备，名义 config 仍分别对应各轮实际 FOV。保留原始位深时，准备与出图都选择 `preserve`；已转为 uint8 的输入无法通过后续转回 uint16 恢复精度。
+
+每通道 TIFF 按二维 `Y,X` 或灰度堆栈 `Z,Y,X` 读取。31 通过 30 的 reader 使用 `tifffile.imread()`，32 同样直接读取 TIFF，3/4 页堆栈不会再经过 skimage 的自动换轴。普通多页 TIFF 的 `QYX` 元数据沿用本流程的 Z 页堆栈语义；配准使用 MIP，指定层与 stack 按 Z 选择。
 
 ## 实际调用链与算法
 
@@ -114,6 +116,6 @@ wrapper 主通道组始终对应 31 的 IF/moving 角色；`channel_mode` 只选
 
 ## 验证范围与历史记录
 
-当前测试入口：`test_contracts/test_joint_stitching_contracts.py`（wrapper / generator）和 `test_contracts/test_joint_three_round_contracts.py`（真实合成 TIFF / CLI）。后者需激活 ashlar 环境以设置 Java，检查独立 FOV 清单、已知平移、小旋转、共同画布、实际地标、缺乏匹配失败及防覆盖。测试使用 Ashlar 1.20.0；行为依据实际安装的 `ashlar/reg.py`，可对照[官方 v1.20.0 源码](https://github.com/labsyspharm/ashlar/blob/v1.20.0/ashlar/reg.py)。2026-11-19：9 项 wrapper/generator 契约通过；合成作业 5242827 的 3 项真实 TIFF 行为契约全部通过（18 秒、4 CPU 配额、计算线程 1）。首轮不同覆盖测试曾失败，定位并修正粗配准覆盖边界偏差后重测通过；未通过放宽坐标误差容限处理。诊断日志保存在项目 `02_Upstream/04_stitching/diagnostics/0001_261119_002916_joint_three_round_contracts/`。合成测试通过不等于 GBM 三轮真实数据已验收。
+当前测试入口：`test_contracts/test_joint_stitching_contracts.py`（wrapper / generator）、`test_contracts/test_ashlar_tiff_readers.py`（真实灰度 TIFF reader）和 `test_contracts/test_joint_three_round_contracts.py`（真实合成 TIFF / CLI）。真实 reader / CLI 契约需激活 ashlar 环境以设置 Java，并在计算节点运行。reader 契约覆盖二维及 3/4/5/45 层、非正方形宽高、原位深、MIP/指定层/stack 像素和旋转。三轮 CLI 契约保留独立 FOV 清单、已知平移、小旋转、共同画布、实际地标、缺乏匹配失败及防覆盖检查，并增加 3 页堆栈案例，核对真实相对坐标、独立计算的画布范围和三轮地标叠加。测试使用 Ashlar 1.20.0；行为依据实际安装的 `ashlar/reg.py`，可对照[官方 v1.20.0 源码](https://github.com/labsyspharm/ashlar/blob/v1.20.0/ashlar/reg.py)。2026-11-19：9 项 wrapper/generator 契约通过；合成作业 5242827 的 3 项真实 TIFF 行为契约全部通过（18 秒、4 CPU 配额、计算线程 1）。首轮不同覆盖测试曾失败，定位并修正粗配准覆盖边界偏差后重测通过；未通过放宽坐标误差容限处理。诊断日志保存在项目 `02_Upstream/04_stitching/diagnostics/0001_261119_002916_joint_three_round_contracts/`。合成测试通过不等于 GBM 三轮真实数据已验收。
 
 保留原说明中的历史事实：2026-10 的双轮版本曾记录 GBM001–016 连通、跨轮残差中位数 0.18–0.37 px，GBM006–009 约 1 px；GBM001/002 旋转约 −1.35°，GBM003–009、015 约 26–58 mdeg。旧说明还记录不同实现间绝对尺度最多约 60 ppm、跨轮整体平移约 0.3 px 的差异。这些是旧双轮版本的自洽性记录，本次未独立复算，也不能作为新三轮版本或生物学正确性的验收证据。
