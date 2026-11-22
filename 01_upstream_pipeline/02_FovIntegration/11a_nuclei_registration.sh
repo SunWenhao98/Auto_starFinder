@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J Nuclei_based_Registration
-#SBATCH -o logs011_nuclei_registration/%x_%A_%a.out
-#SBATCH -e logs011_nuclei_registration/%x_%A_%a.err
+#SBATCH -o logs011a_nuclei_registration/%x_%A_%a.out
+#SBATCH -e logs011a_nuclei_registration/%x_%A_%a.err
 #SBATCH -p C64M512G
 #SBATCH -c 4
 #SBATCH --time=24:00:00
@@ -11,7 +11,7 @@ set -euo pipefail
 
 print_usage() {
     cat <<'USAGE'
-Usage: 11_nuclei_registration.sh --project_root PATH --project_name NAME --reg_dir_suffix NAME [options]
+Usage: 11a_nuclei_registration.sh --project_root PATH --project_name NAME --reg_dir_suffix NAME [options]
 
 Options:
   --offset INT
@@ -25,6 +25,7 @@ Options:
   --aligned_round_outdir NAME
   --moving_round NAME
   --channel_panel MODE
+  --apply_and_save_images BOOL  Apply shifts and save all images (default: false).
   --core_matlab_dir PATH
   -h, --help
 USAGE
@@ -59,6 +60,7 @@ NORM_OUT_FORMAT="uint8"
 ALIGNED_ROUND_OUTDIR="IF"
 MOVING_ROUND="IF"
 CHANNEL_PANEL="OlympusIF"
+APPLY_AND_SAVE_IMAGES="false"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -77,6 +79,7 @@ while [[ $# -gt 0 ]]; do
         --aligned_round_outdir) ALIGNED_ROUND_OUTDIR="$2"; shift 2 ;;
         --moving_round) MOVING_ROUND="$2"; shift 2 ;;
         --channel_panel) CHANNEL_PANEL="$2"; shift 2 ;;
+        --apply_and_save_images) APPLY_AND_SAVE_IMAGES="$2"; shift 2 ;;
         -h|--help) print_usage; exit 0 ;;
         *) echo "Error: unknown parameter: $1" >&2; print_usage >&2; exit 1 ;;
     esac
@@ -127,7 +130,12 @@ readarray -t POSITIONS < <(find -L "$DATA_DIR" -maxdepth 1 -type d -name 'Positi
 POSITION_NAME="$(basename "${POSITIONS[$INDEX]}")"
 REGISTRATION_FOLDER="02_registration${REG_DIR_SUFFIX}"
 REG_ROOT="${PROJECT_ROOT}/${PROJECT_NAME}/${REGISTRATION_FOLDER}"
-REGISTRATION_LOG_FILE="${REG_ROOT}/${POSITION_NAME}/log/log_protein_registration_${ALIGNED_ROUND_OUTDIR}.txt"
+REGISTRATION_TARGET_TAG="${ALIGNED_ROUND_OUTDIR//[^A-Za-z0-9_.-]/_}"
+REGISTRATION_LOG_FILE="${REG_ROOT}/${POSITION_NAME}/log/log_protein_registration_${REGISTRATION_TARGET_TAG}.txt"
+APPLY_AND_SAVE_IMAGES_MATLAB="false"
+if [[ "${APPLY_AND_SAVE_IMAGES,,}" == "true" ]]; then
+    APPLY_AND_SAVE_IMAGES_MATLAB="true"
+fi
 
 print_slurm_info
 echo "[PARAM] PROJECT_ROOT=${PROJECT_ROOT}"
@@ -146,6 +154,7 @@ echo "[PARAM] NORM_OUT_FORMAT=${NORM_OUT_FORMAT}"
 echo "[PARAM] ALIGNED_ROUND_OUTDIR=${ALIGNED_ROUND_OUTDIR}"
 echo "[PARAM] MOVING_ROUND=${MOVING_ROUND}"
 echo "[PARAM] CHANNEL_PANEL=${CHANNEL_PANEL}"
+echo "[PARAM] APPLY_AND_SAVE_IMAGES=${APPLY_AND_SAVE_IMAGES_MATLAB}"
 echo "[PARAM] CORE_MATLAB_DIR=${CORE_MATLAB_DIR}"
 echo "[PATH] REG_ROOT=${REG_ROOT}"
 echo "[OUTPUT] REGISTRATION_LOG_FILE=${REGISTRATION_LOG_FILE}"
@@ -153,5 +162,5 @@ echo "[OUTPUT] REGISTRATION_LOG_FILE=${REGISTRATION_LOG_FILE}"
 module purge
 module load matlab/2023a
 
-matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'nuclei_protein_registration', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'moving_round', '$MOVING_ROUND', 'aligned_round_outdir', '$ALIGNED_ROUND_OUTDIR', 'input_format', '$INPUT_FORMAT', 'norm_out_format', '$NORM_OUT_FORMAT', 'channel_panel', $CHANNEL_PANEL_MATLAB)"
+matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'nuclei_protein_registration', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'moving_round', '$MOVING_ROUND', 'aligned_round_outdir', '$ALIGNED_ROUND_OUTDIR', 'input_format', '$INPUT_FORMAT', 'norm_out_format', '$NORM_OUT_FORMAT', 'channel_panel', $CHANNEL_PANEL_MATLAB, 'apply_and_save_images', $APPLY_AND_SAVE_IMAGES_MATLAB)"
 [[ -s "$REGISTRATION_LOG_FILE" ]] || { echo "Error: registration log missing or empty: $REGISTRATION_LOG_FILE" >&2; exit 1; }

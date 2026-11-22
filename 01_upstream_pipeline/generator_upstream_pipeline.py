@@ -209,24 +209,27 @@ STEP_SPECS = {
     ), log_root_key="seg_log", script_dir_from_wrapper=True),
     "nuclei_reg": StepSpec(
         "run_nuclei_registration", "script_nuclei_registration",
-        "nuclei_registration", "array", "nuclei_reg", "logs011_nuclei_registration",
+        "nuclei_registration", "array", "nuclei_reg", "logs011a_nuclei_registration",
         CORE_MATLAB_ARG + COMMON_ARGS + IMAGE_ARGS + (
             ("nuclei_reg_input_format", "--input_format"),
             ("nuclei_reg_norm_out_format", "--norm_out_format"),
             ("nuclei_reg_aligned_round_outdir", "--aligned_round_outdir"),
             ("nuclei_reg_moving_round", "--moving_round"),
             ("nuclei_reg_channel_panel", "--channel_panel"),
+            ("nuclei_reg_apply_and_save_images", "--apply_and_save_images"),
             ("nuclei_reg_offset", "--offset"),
         ),
         log_root_key="stitch_log",
     ),
     "prepare_layout": StepSpec(
         "run_prepare_layout", "script_prepare_layout", "prepare_layout", "single",
-        "prepare_layout", "logs021_prepare_layout", CONDA_SH_ARG + COMMON_ARGS + (
+        "prepare_layout", "logs011b_prepare_layout", CONDA_SH_ARG + COMMON_ARGS + (
             ("prepare_layout_rawdata_round", "--rawdata_round"),
             ("prepare_layout_stitching_workdir", "--stitching_workdir"),
             ("prepare_layout_channel_mode", "--channel_mode"),
             ("prepare_layout_output_format", "--output_format"),
+            ("prepare_layout_mode", "--layout_mode"),
+            ("prepare_layout_round_manifest", "--round_manifest"),
         ),
         log_root_key="stitch_log",
         script_dir_from_wrapper=True,
@@ -299,11 +302,9 @@ STEP_SPECS = {
         "run_prepare_moveimages", "script_prepare_moveimages", "prepare_moveimages",
         "single", "prepare_moveimages", "logs023_prepare_moveimages", CONDA_SH_ARG + COMMON_ARGS + (
             ("prepare_moveimages_stitching_workdir", "--stitching_workdir"),
-            ("prepare_moveimages_rawdata_round", "--rawdata_round"),
-            ("prepare_moveimages_channel_mode", "--channel_mode"),
+            ("prepare_moveimages_registration_log_name", "--registration_log_name"),
             ("prepare_moveimages_input_config", "--input_config"),
             ("prepare_moveimages_output_config", "--output_config"),
-            ("prepare_moveimages_output_format", "--output_format"),
             ("prepare_moveimages_rotate_shifts", "--rotate_shifts"),
             ("prepare_moveimages_shift_sign", "--shift_sign"),
         ),

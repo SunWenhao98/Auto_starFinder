@@ -117,6 +117,7 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
     addParameter(p, 'fsigma', defaultfsigma);
     addParameter(p, 'decoding_rounds', defaultdecoding_rounds);
     is_switch = @(x) islogical(x) && isscalar(x);
+    addParameter(p, 'apply_and_save_images', false, is_switch);
     addParameter(p, 'save_decode_evidence', false, is_switch);
     addParameter(p, 'preTIFF_out', false, is_switch);
     addParameter(p, 'alignTIFF_out', false, is_switch);
@@ -875,48 +876,67 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
         registration_target_tag = regexprep(char(aligned_round_outdir), '[^A-Za-z0-9_.-]', '_');
         registration_log_file = fullfile(curr_out_path_log, sprintf('log_protein_registration_%s.txt', registration_target_tag));
 
+        sub_dirs = string(p.Results.channel_panel);
+        protein_output_dir = fullfile(output_path, p.Results.aligned_round_outdir);
+        if isfile(registration_log_file) || isfolder(registration_log_file)
+            error('Registration log already exists: %s', registration_log_file);
+        end
+        if p.Results.apply_and_save_images
+            image_sub_dirs = sub_dirs;
+            image_sub_dirs(end+1) = "ref-DAPI";
+            image_output_dirs = fullfile(protein_output_dir, image_sub_dirs);
+            % Check each output path component below the registration root.
+            image_output_parents = string(output_path);
+            for image_part = reshape(split(aligned_round_outdir, filesep), 1, [])
+                image_output_parents(end+1) = fullfile(image_output_parents(end), image_part);
+            end
+            % SaveCellImg writes through its directory path, so its directories must be real.
+            for image_dir = [image_output_parents(2:end), reshape(image_output_dirs, 1, [])]
+                output_directory_file = java.io.File(char(image_dir));
+                if java.nio.file.Files.isSymbolicLink(output_directory_file.toPath())
+                    error('Registration image output directory is a symbolic link: %s', image_dir);
+                end
+            end
+            image_output_files = fullfile(image_output_dirs, strcat(p.Results.tile, '.tif'));
+            % Array tasks share channel directories, so protect the files for this FOV.
+            if any(isfile(image_output_files) | isfolder(image_output_files), 'all')
+                error('Registration images already exist for %s in %s.', p.Results.tile, protein_output_dir);
+            end
+        end
+
         sdata = new_STARMapDataset_zf(input_path, output_path, 'useGPU', false);
         sdata.log = fopen(registration_log_file, 'w');
-        sub_dirs = string(p.Results.channel_panel);
         fprintf(sdata.log, 'log_protein_registration:\n');
         fprintf(sdata.log, 'moving_round: %s\n', string(p.Results.moving_round));
         fprintf(sdata.log, 'aligned_round_outdir: %s\n', aligned_round_outdir);
         fprintf(sdata.log, 'channel_panel: %s\n', sub_dirs);
         fprintf(sdata.log, 'registration_target_tag: %s\n', registration_target_tag);
         fprintf(sdata.log, 'registration_log_file: %s\n', registration_log_file);
+        fprintf(sdata.log, 'apply_and_save_images: %d\n', p.Results.apply_and_save_images);
 
-        % perform DAPI-based registration of amplicon signal and protein rounds
-        % output_format = p.Results.norm_out_format;
         num_stains = length(sub_dirs);
         if num_stains < 4
-            dapi_channel = 1;       % if number of stains is less than 4, dapi would be the first channel
+            dapi_channel = 1;
         else
-            dapi_channel = 4;       % during convert of vsi format, dapi would be changed to the 4th channel
+            dapi_channel = 4;
         end
 
         reference_round = sprintf('round%03d', p.Results.ref_round);
         sdata = sdata.NucleiRegistrationProtein(p.Results.moving_round, reference_round, p.Results.tile, dapi_channel, ...
-                                                p.Results.input_format, p.Results.norm_out_format);
+                                                p.Results.input_format, p.Results.norm_out_format, ...
+                                                p.Results.apply_and_save_images);
 
-        % create a specalized path to save cell images;
-        protein_output_dir = fullfile(output_path, p.Results.aligned_round_outdir);
-        if ~exist(protein_output_dir, 'dir')
-            mkdir(protein_output_dir);
+        if p.Results.apply_and_save_images
+            SaveCellImg(protein_output_dir, sdata.proteinImages, p.Results.tile, image_sub_dirs);
+            fprintf(sdata.log, 'protein images saved.\n');
         end
-
-        sub_dirs(end+1) = "ref-DAPI";
-        % sub_dirs(end+1) = "ref-DAPI_MIP"
-        SaveCellImg(protein_output_dir, sdata.proteinImages, p.Results.tile, sub_dirs);
-        % 1. 输出目录
-        % 2. 配准图像
-        % 3. fov 编号
-        % 4. 蛋白质标记物
-        fprintf(sdata.log, 'protein images saved.\n');
         fclose(sdata.log);
         fprintf('Protein registration log saved: %s\n', registration_log_file);
         fprintf('Nuclei-protein registration is done!\n');
 
     end
+
+    
     %% 2025-09-14: global spot Finding
     if strcmp(p.Results.mode, 'global_spot_finding')
 

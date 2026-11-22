@@ -647,126 +647,92 @@
         
         % 6.5 use DAPI register protein images  
         function obj = NucleiRegistrationProtein( obj, protein_folder, reference_round, sub_dir, dapi_channel, ...
-                                                  input_format, output_format )
-            
+                                                  input_format, output_format, apply_and_save_images )
             fprintf('====Nuclei-based Registration====\n');
-            
-            % dapi_formatIn = input_format;
-            % dapi_formatOut = output_format;
-            
-            % load reference dapi image
+
+            % Reference DAPI is ch03 in the raw multi-round image layout.
             fprintf('Loading reference DAPI image from %s...\n', reference_round);
-            ref_dapi_path = dir(fullfile(obj.inputPath, reference_round, sub_dir, "*.tif"));
+            ref_dapi_path = dir(fullfile(obj.inputPath, reference_round, sub_dir, "*ch03.tif"));
             ref_dapi = new_LoadMultipageTiff(fullfile(ref_dapi_path(end).folder, ref_dapi_path(end).name), ...
                                              input_format, output_format, false);
-            
-            % load protein images
-            protein_path = fullfile(obj.inputPath, protein_folder, sub_dir); % IF/Position{iii}
-            protein_files = dir(fullfile(protein_path, '*.tif'));
-            nfiles = numel(protein_files);      % 参考轮图像一起存进来
-            protein_imgs = cell(nfiles, 1);  % create a cell array to store protein images
+            protein_path = fullfile(obj.inputPath, protein_folder, sub_dir);
+            obj.proteinImages = {};
 
-            % Load tiff files of all channels
-            for c=1:nfiles 
-                curr_path = strcat(protein_files(c).folder, '/', protein_files(c).name);
-                curr_img = new_LoadMultipageTiff(curr_path, input_format, output_format, false);
-                protein_imgs{c} = curr_img;
+            if apply_and_save_images
+                protein_files = dir(fullfile(protein_path, '*.tif'));
+                nfiles = numel(protein_files);
+                protein_imgs = cell(nfiles, 1);
+                for c=1:nfiles
+                    curr_path = fullfile(protein_files(c).folder, protein_files(c).name);
+                    protein_imgs{c} = new_LoadMultipageTiff(curr_path, input_format, output_format, false);
+                end
+                mov = protein_imgs{dapi_channel};
+            else
+                moving_dapi_path = dir(fullfile(protein_path, sprintf('*ch%02d.tif', dapi_channel - 1)));
+                mov = new_LoadMultipageTiff(fullfile(moving_dapi_path(end).folder, moving_dapi_path(end).name), ...
+                                             input_format, output_format, false);
             end
 
-
+            tic;
             if obj.useGPU
-                
-                tic;
-                
-                fix = gpuArray(ref_dapi);
-                mov = gpuArray(protein_imgs{dapi_channel});
-
-                params = DFTRegister3D(fix, mov, false);
-
-                for c=1:4
-                    curr_reg = DFTApply3D(gpuArray(protein_imgs{c}), params, false);
-                    protein_imgs{c} = uint8(gather(curr_reg));
-                end
-
-                obj.proteinImages = protein_imgs;
-                fprintf(sprintf('Move nuclei vs. Ref nuclei finished [time=%02f]\n', toc));
-                fprintf(obj.log, sprintf('Move nuclei vs. Ref nuclei finished [time=%02f]\n', toc));
-                fprintf(sprintf('Shifted by %s\n', num2str(params.shifts)));
-                fprintf(obj.log, sprintf('Shifted by %s\n', num2str(params.shifts)));
-                reset(gpuDevice);
-               
-            else
-                tic;
-                % add 2023-03-15
-                mov = protein_imgs{dapi_channel};  % args: default dapi_channel=1; here is 4
-                img_class = class(mov);            % z axis 
-
-                if size(mov, 3) == 1               % 2d images
-                    params = DFTRegister2D(ref_dapi, mov, false);
+                params = DFTRegister3D(gpuArray(ref_dapi), gpuArray(mov), false);
+                if apply_and_save_images
                     for c=1:nfiles
-                        curr_reg = DFTApply2D(protein_imgs{c}, params, false);
-                        % protein_imgs{c} = uint8(curr_reg);
-                        switch img_class
-                            case 'uint8'
-                                protein_imgs{c} = uint8(curr_reg);
-                            case 'uint16'
-                                protein_imgs{c} = uint16(curr_reg);
+                        curr_reg = DFTApply3D(gpuArray(protein_imgs{c}), params, false);
+                        protein_imgs{c} = uint8(gather(curr_reg));
+                    end
+                end
+            else
+                img_class = class(mov);
+                if size(mov, 3) == 1
+                    params = DFTRegister2D(ref_dapi, mov, false);
+                    if apply_and_save_images
+                        for c=1:nfiles
+                            curr_reg = DFTApply2D(protein_imgs{c}, params, false);
+                            switch img_class
+                                case 'uint8'
+                                    protein_imgs{c} = uint8(curr_reg);
+                                case 'uint16'
+                                    protein_imgs{c} = uint16(curr_reg);
+                            end
                         end
                     end
-    
-                    obj.proteinImages = protein_imgs;
-                    fprintf(sprintf('Move nuclei vs. Ref nuclei finished [time=%02f]\n', toc));
-                    fprintf(obj.log, sprintf('Move nuclei vs. Ref nuclei finished [time=%02f]\n', toc));
-                    fprintf(sprintf('Shifted by %s\n', num2str(params.shifts)));
-                    fprintf(obj.log, sprintf('Shifted by %s\n', num2str(params.shifts)));
-
                 else
                     fprintf('Reference DAPI size: %s\n', mat2str(size(ref_dapi)));
                     fprintf('Moving Image size: %s\n', mat2str(size(mov)));
                     params = DFTRegister3D(ref_dapi, mov, false);
-
-                    for c=1:nfiles
-                        curr_reg = DFTApply3D(protein_imgs{c}, params, false);   % 依次应用 配准参数
-
-                        switch img_class
-                            case 'uint8'
-                                protein_imgs{c} = uint8(curr_reg);
-                            case 'uint16'
-                                protein_imgs{c} = uint16(curr_reg);
+                    if apply_and_save_images
+                        for c=1:nfiles
+                            curr_reg = DFTApply3D(protein_imgs{c}, params, false);
+                            switch img_class
+                                case 'uint8'
+                                    protein_imgs{c} = uint8(curr_reg);
+                                case 'uint16'
+                                    protein_imgs{c} = uint16(curr_reg);
+                            end
                         end
                     end
-                    % 用作固定图像的参考轮图像也存进protein_imgs，以特定命名存入IF，作为拼接配准的主要目标
-                    ref_dapi_mip_raw = max(ref_dapi, [], 3); 
-                    switch img_class
-                        case 'uint8'
-                            ref_dapi_formatted = uint8(ref_dapi);
-                            ref_dapi_mip = uint8(ref_dapi_mip_raw);
-                            
-                        case 'uint16'
-                            ref_dapi_formatted = uint16(ref_dapi);
-                            ref_dapi_mip = uint16(ref_dapi_mip_raw);
-                            
-                        otherwise
-                            ref_dapi_formatted = ref_dapi;
-                            ref_dapi_mip = ref_dapi_mip_raw;
-                    end
-                    protein_imgs{end+1} = ref_dapi_formatted;
-                    protein_imgs{end+1} = ref_dapi_mip;
-    
-                    obj.proteinImages = protein_imgs;   % 更新后的配准蛋白质图像 存储到 obj.proteinImages
-                    fprintf(sprintf('Move nuclei vs. Ref nuclei finished [time=%02f]\n', toc));
-                    fprintf(obj.log, sprintf('Move nuclei vs. Ref nuclei finished [time=%02f]\n', toc));
-                    fprintf(sprintf('Shifted by %s\n', num2str(params.shifts)));
-                    fprintf(obj.log, sprintf('Shifted by %s\n', num2str(params.shifts)));
                 end
             end
 
-            % change metadata
+            if apply_and_save_images
+                protein_imgs{end+1} = cast(ref_dapi, 'like', protein_imgs{1});
+                if size(mov, 3) > 1
+                    protein_imgs{end+1} = max(protein_imgs{end}, [], 3);
+                end
+                obj.proteinImages = protein_imgs;
+            end
+            fprintf('Move nuclei vs. Ref nuclei finished [time=%02f]\n', toc);
+            fprintf(obj.log, 'Move nuclei vs. Ref nuclei finished [time=%02f]\n', toc);
+            fprintf('Shifted by %s\n', num2str(params.shifts));
+            fprintf(obj.log, 'Shifted by %s\n', num2str(params.shifts));
+            if obj.useGPU
+                reset(gpuDevice);
+            end
             obj.jobFinished.NucleiRegistrationProtein = 1;
-            
         end
-        
-        
+
+
         % 7.Spot finding
         function obj = SpotFinding( obj, varargin )
             
