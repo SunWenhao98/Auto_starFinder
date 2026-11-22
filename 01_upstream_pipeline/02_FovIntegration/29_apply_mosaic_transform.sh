@@ -14,6 +14,7 @@ print_usage() {
 Usage: 29_apply_mosaic_transform.sh --project_root PATH --project_name NAME --reg_dir_suffix DIR --transform_json PATH --fixed_path PATH --moving_path PATH --output_workdir DIR --output_label NAME [options]
 
 Options:
+  --channel_manifest FILE (relative to the registration directory)
   --tile_size_px INT
   --interpolation_order INT
   --preview_downsample INT
@@ -49,6 +50,7 @@ CONDA_SH=""
 TRANSFORM_JSON=""
 FIXED_PATH=""
 MOVING_PATH=""
+CHANNEL_MANIFEST=""
 OUTPUT_WORKDIR=""
 OUTPUT_LABEL=""
 TILE_SIZE_PX="1024"
@@ -69,6 +71,7 @@ while [[ $# -gt 0 ]]; do
         --transform_json) TRANSFORM_JSON="$2"; shift 2 ;;
         --fixed_path) FIXED_PATH="$2"; shift 2 ;;
         --moving_path) MOVING_PATH="$2"; shift 2 ;;
+        --channel_manifest) CHANNEL_MANIFEST="$2"; shift 2 ;;
         --output_workdir) OUTPUT_WORKDIR="$2"; shift 2 ;;
         --output_label) OUTPUT_LABEL="$2"; shift 2 ;;
         --tile_size_px) TILE_SIZE_PX="$2"; shift 2 ;;
@@ -128,6 +131,7 @@ echo "[PARAM] PROJECT_NAME=${PROJECT_NAME}"
 echo "[PARAM] TRANSFORM_JSON=${TRANSFORM_JSON}"
 echo "[PARAM] FIXED_PATH=${FIXED_PATH}"
 echo "[PARAM] MOVING_PATH=${MOVING_PATH}"
+echo "[PARAM] CHANNEL_MANIFEST=${CHANNEL_MANIFEST}"
 echo "[PARAM] OUTPUT_WORKDIR=${OUTPUT_WORKDIR}"
 echo "[PARAM] OUTPUT_LABEL=${OUTPUT_LABEL}"
 echo "[PARAM] TILE_SIZE_PX=${TILE_SIZE_PX}"
@@ -156,6 +160,11 @@ COMMAND=(
     --compression "$COMPRESSION"
     --overwrite "$OVERWRITE"
 )
+if [[ -n "$CHANNEL_MANIFEST" ]]; then
+    CHANNEL_MANIFEST_FILE="${REG_ROOT}/${CHANNEL_MANIFEST}"
+    echo "[PATH] CHANNEL_MANIFEST_FILE=${CHANNEL_MANIFEST_FILE}"
+    COMMAND+=(--channel_manifest "$CHANNEL_MANIFEST_FILE")
+fi
 
 echo "[PATH] REG_ROOT=${REG_ROOT}"
 echo "[PATH] TRANSFORM_JSON_FILE=${TRANSFORM_JSON_FILE}"

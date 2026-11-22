@@ -68,7 +68,7 @@ class TiffWindowReader:
             raise ValueError(
                 f"Expected a 2D TIFF/OME-TIFF, got shape {series.shape} for {self.path}"
             )
-        self._store = series.aszarr()
+        self._store = series.aszarr(level=0)
         self._array = zarr.open(self._store, mode="r")
         return self
 

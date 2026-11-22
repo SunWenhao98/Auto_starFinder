@@ -85,7 +85,7 @@ STEP_ORDER = (
     "prepare_tile_config", "fiji_stitch_initial", "ashlar_stitch_initial",
     "prepare_moveimages", "fiji_stitch_mosaic", "ashlar_stitch_mosaic",
     "pyreg", "matreg", "reg_compare", "transform_apply",
-    "ashlar_mst_stitch", "ashlar_joint_stitch", "ashlar_joint_mosaic",
+    "ashlar_mst_stitch", "ashlar_joint_stitch", "ashlar_joint_mosaic", "mosaic_display",
     "cellreads_integration", "csv_to_count_matrix",
 )
 STEP_SPECS = {
@@ -424,6 +424,7 @@ STEP_SPECS = {
         ),
         log_root_key="stitch_log",
         script_dir_from_wrapper=True,
+        optional_args=(("transform_apply_channel_manifest", "--channel_manifest"),),
     ),
     # 3x: joint ref / IF / optional seqE (MST/LSQ and shared canvas)
     "ashlar_mst_stitch": StepSpec(
@@ -499,6 +500,20 @@ STEP_SPECS = {
             ("ashlar_joint_mosaic_seqe_channel_dir_prefix", "--seqe_channel_dir_prefix"),
             ("ashlar_joint_mosaic_seqe_input_config", "--seqe_input_config"),
         ),
+    ),
+    "mosaic_display": StepSpec(
+        "run_mosaic_display", "script_mosaic_display",
+        "mosaic_display", "single", "mosaic_display", "logs033_mosaic_display",
+        CONDA_SH_ARG + COMMON_ARGS + (
+            ("mosaic_display_stitching_workdir", "--stitching_workdir"),
+            ("mosaic_display_input_manifest", "--input_manifest"),
+            ("mosaic_display_profile", "--display_profile"),
+            ("mosaic_display_output_dirname", "--output_dirname"),
+            ("mosaic_display_subtract_background", "--subtract_background"),
+            ("mosaic_display_apply_display_mapping", "--apply_display_mapping"),
+        ),
+        log_root_key="stitch_log",
+        script_dir_from_wrapper=True,
     ),
     "cellreads_integration": StepSpec(
         "run_cellreads_integration", "script_cellreads_integration",

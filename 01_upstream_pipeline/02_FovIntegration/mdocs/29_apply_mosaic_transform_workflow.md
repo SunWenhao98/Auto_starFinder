@@ -1,17 +1,17 @@
 # 29 Mosaic Transform Application 工作流逐块解读
 
-> 本文按两条 registration backend 在 job 内调用共享 runner、`29_apply_mosaic_transform.sh` 独立 replay wrapper，以及 `p29_apply_mosaic_transform.py` 的源码执行顺序解读。所有行号均对应当前源码；本文只读说明代码，不修改业务脚本。
+> 本文按两条 registration backend 在 job 内调用共享 runner、`29_apply_mosaic_transform.sh` 独立 replay wrapper，以及 `p29_apply_mosaic_transform.py` 的源码执行顺序解读。
 
 ---
 
 ## 📋 文档定位
 
-Step 29 是统一的 transform application 功能层。它接收一份已经生成的 backend transform JSON、fixed/reference mosaic 和 moving mosaic，严格验证 transform 与当前输入的身份及坐标合同，然后把 moving 以 `moving_to_reference` translation 反采样到 fixed canvas。
+Step 29 读取已有 backend transform JSON 及估计变换时使用的两张 DAPI 全图。验证文件身份和坐标约定后，将 moving DAPI 及清单中的可选同轮图像逐块重采样到同一参考轮画布。
 
 Step 29 有两种运行方式：
 
 1. **被 Step 25/26 内部调用**：25/26 先完成对应 backend registration，再在同一个 SLURM job 中调用 `p29_apply_mosaic_transform.py`。这时输出 prefix 通常是 `P.python` 或 `P.matlab`，因此应用输出具有 backend-specific 命名。
-2. **独立 replay**：手动提交 `29_apply_mosaic_transform.sh`，对已有合规 transform 重放 application。这个 wrapper 使用调用者传入的 output prefix，不自动添加 `.python` 或 `.matlab`。
+2. **独立 replay**：由 `29_apply_mosaic_transform.sh` 重放已有变换。可传入 `--channel_manifest`，把同一变换用于多个通道或指定层的二维拼图。输出 prefix 由调用方提供。
 
 Step 29 不重新估计 shift，也不读取 Step 28 comparison JSON 作为 transform。Step 28 的说明见 [`28_compare_mosaic_registration_workflow.md`](28_compare_mosaic_registration_workflow.md)。
 
@@ -28,6 +28,7 @@ flowchart LR
     fixed["fixed/reference mosaic"] --> validate
     moving["moving mosaic"] --> validate
     validate --> sample["tile-wise source = output - shift"]
+    manifest["Optional same-grid channel manifest"] --> sample
     sample --> temp["temporary OME-TIFF / preview / QC / metadata"]
     temp --> publish["atomic publish"]
     publish --> outputs["registered image + application JSON + preview + QC"]
@@ -54,19 +55,26 @@ backend-specific output prefix
 
 25 的 output prefix 由 `${OUTPUT_PREFIX}.python.*` 展开，26 由 `${OUTPUT_PREFIX}.matlab.*` 展开。两个 wrapper 都在 registration backend 成功返回后才调用 p29；因此 p29 接收的 transform 应当已经有 `quality.status = PASS`。
 
-### 独立 wrapper 不由 generator 自动提交
+### 独立 wrapper 与方案 B 通道复用
 
-`generate_pipeline3.py:255-279` 只读取：
+`generator_upstream_pipeline.py` 通过 `run_apply_mosaic_transform` 启用第 29 步。它将 `transform_apply_channel_manifest` 原样传给 wrapper 的 `--channel_manifest`，该路径相对于当前样本的 `02_registration<suffix>/`。独立提交时应事先准备 `logs029_mosaic_registration` 日志目录。
 
-```python
-run_mosaic_registration_python
-run_mosaic_registration_matlab
-run_mosaic_registration_compare
+方案 B 中，先使用第 15/22 步的 DAPI 拼接坐标为同轮各通道出图，再使用第 25/26 步的 DAPI 全图变换完成轮间重采样。IF 和 seqE 分别用各自的 moving DAPI、transform JSON 与通道清单调用 29。两份变换的 `fixed_path` 都应指向此次比较选定的同一参考轮 DAPI。两次调用使用不同的输出标签，最后得到同尺寸、同坐标原点的参考图、已配准 IF 图和已配准 seqE 图。
+
+例如，将以下 JSON 存在 `02_registration<suffix>/B_IF_channels.json`，在该次 IF 调用配置 `transform_apply_channel_manifest = B_IF_channels.json`。清单中的相对路径以 JSON 文件所在目录为基准，也可提供绝对路径。
+
+```json
+{
+  "CA9": "B_IF/stitching_results/stitched_561-CA9_2d.ome.tif",
+  "CD144": "B_IF/stitching_results/stitched_488-CD144_2d.ome.tif",
+  "CD31": "B_IF/stitching_results/stitched_647-CD31_2d.ome.tif",
+  "CA9_z020": "B_IF/stitching_results/stitched_561-CA9_z020_2d.ome.tif"
+}
 ```
 
-没有独立的 `run_mosaic_transform_apply` flag。`batch_config.example.ini:102-113` 也没有对应 Step 29 开关。Step 29 shell 文件虽然在 `SCRIPT_DIR` 中可用，但独立 replay 需要手动提交并自行准备 `logs029_mosaic_registration` 的 SLURM 日志目录。
+`moving_path` 始终指向生成该变换的 DAPI MIP。同轮 DAPI 的单独 Z 层也可加入清单。清单条目须使用与 moving DAPI 同一套拼接坐标、像素间距、原点、方向和裁切约定。尺寸不同会使跨通道重采样偏移或裁切错误，TIFF 打开时只会检查图像是否可读，因此 runner 在复用边界核对每项的二维尺寸。该检查只打开 TIFF 头，不解码整图。尺寸相同无法证明空间一致，清单声明仍以图像实际生产过程为准。
 
-这两个入口的职责不能混为一谈：
+各入口与输出前缀对应如下。
 
 | 入口 | output prefix | 典型用途 |
 | --- | --- | --- |
@@ -76,7 +84,7 @@ run_mosaic_registration_compare
 
 ## 🧰 Wrapper 执行顺序：`29_apply_mosaic_transform.sh`
 
-### 1. SLURM 资源与严格模式：`1-11`
+### 1. SLURM 资源与严格模式
 
 ```bash
 #SBATCH -J mosaic_apply_transform
@@ -85,31 +93,35 @@ run_mosaic_registration_compare
 #SBATCH -p C64M256G
 #SBATCH -N 1
 #SBATCH -c 8
-#SBATCH --mem=30G
 #SBATCH --time=08:00:00
 
 set -euo pipefail
 ```
 
-独立 application 需要 8 CPU、30G、8 小时。严格模式确保 runner、输入检查或五项输出检查失败时不输出成功状态。
+独立 application 默认申请 8 CPU，时限为 8 小时，内存随集群的 CPU 配额分配。严格模式确保 runner 或终点检查失败时返回非零。
 
-### 2. 帮助文本与参数默认值：`13-47`
+### 2. 帮助文本与参数默认值
 
-帮助文本要求四个核心参数：
+wrapper 使用样本目录和注册分支定位输入与输出。
 
 ```text
---transform_json FILE
---fixed_mosaic FILE
---moving_mosaic FILE
---output_prefix PATH
+--project_root PATH
+--project_name NAME
+--reg_dir_suffix DIR
+--transform_json PATH
+--fixed_path PATH
+--moving_path PATH
+--output_workdir DIR
+--output_label NAME
 ```
 
 其它默认值如下：
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
-| `--script_dir` | 当前 `02_FovIntegration` | 定位 p29 runner |
-| `--conda_env` | `ashlar` | Python runtime |
+| `--script_dir` | 必传 | 定位 p29 runner |
+| `--conda_sh` | 必传 | 定位 conda 初始化脚本，激活 `ashlar` 环境 |
+| `--channel_manifest` | 空 | 可选同轮通道或切片清单 |
 | `--tile_size_px` | `1024` | tiled output 的边长 |
 | `--interpolation_order` | `1` | `0` nearest，`1` linear |
 | `--preview_downsample` | `16` | QC preview 下采样 |
@@ -118,9 +130,9 @@ set -euo pipefail
 | `--overwrite` | `false` | 是否替换已有 output |
 | `--dry_run` | `false` | 只打印 command |
 
-### 3. 参数解析和 wrapper preflight：`48-69`
+### 3. 参数解析和 wrapper preflight
 
-解析循环把四个 required 参数和 options 写入变量。结束后先检查四个核心值都非空，再限制：
+解析循环把具名参数写入变量。结束后检查必传值，并限制插值阶数。
 
 ```bash
 [[ "$INTERPOLATION_ORDER" == "0" || "$INTERPOLATION_ORDER" == "1" ]] || {
@@ -131,7 +143,7 @@ set -euo pipefail
 
 这里的插值限制与 p29 Python 内部的 `choices=(0, 1)` 和函数级检查重复但一致；wrapper 提前失败可以避免激活环境后才发现明显错误。
 
-### 4. 输出路径和 command：`69-75`
+### 4. 输出路径和 command
 
 独立 wrapper 根据调用者给的 prefix `P` 展开五个 output：
 
@@ -150,23 +162,23 @@ QC_PDF="${OUTPUT_PREFIX}.registration_qc.pdf"
 python -u "$SCRIPT"
 ```
 
-### 5. dry-run、文件检查与环境：`76-85`
+### 5. dry-run、文件检查与环境
 
 wrapper 打印完整 command。`--dry_run true` 时打印后直接退出 0，不检查 transform/input 文件、不激活 conda、不写输出。
 
 真实运行时检查 transform JSON、fixed/moving mosaic 和 Python runner 都存在，创建 output parent，然后：
 
 ```bash
-source "/gpfs/share/home/${USER}/anaconda3/etc/profile.d/conda.sh"
+source "$CONDA_SH"
 set +u
-conda activate "$CONDA_ENV"
+conda activate ashlar
 set -u
 "${COMMAND[@]}"
 ```
 
 独立 wrapper 没有像 25/26 那样显式导出 `OMP_NUM_THREADS` 和 `MKL_NUM_THREADS`；这只影响 wrapper 的环境设置，不改变 p29 的数据契约。
 
-### 6. 五项输出检查与状态：`86-88`
+### 6. 输出检查与状态
 
 runner 返回 0 后，wrapper 检查：
 
@@ -209,7 +221,7 @@ from p25_register_mosaic_python import (
 这不是让 p29 再做 Python registration，而是复用：
 
 - transform schema name/version；
-- `TiffWindowReader` 的二维 TIFF/OME-TIFF 分块读取能力；
+- `TiffWindowReader` 的二维 TIFF/OME-TIFF 分块读取能力，显式选择原分辨率 level 0；
 - QC overview 的分块构建逻辑；
 - boolean CLI 解析。
 
@@ -238,7 +250,7 @@ if Path(moving.get("image", "")).resolve() != moving_path.resolve():
     raise ValueError("Transform moving image does not match --moving_mosaic")
 ```
 
-这一步把 transform 与具体输入文件绑定起来。即使两个文件尺寸相同，只要 canonical path、文件大小或修改时间不一致，也不会继续 application。
+这一步把 transform 与估计变换的两张 DAPI 输入绑定。启用跨通道复用后这项验证继续生效，再读取显式声明位于同一 moving 网格的其他图像。
 
 ### 3. 数组级 translation 与 dtype 处理：`123-157`
 
@@ -348,9 +360,9 @@ overlay 的颜色约定是 fixed magenta、registered moving green；标题还�
 
 `_valid_output_bbox()` 计算 moving 在 fixed canvas 内的有效输出边界。`_clipped_source_bounds()` 计算实际从 moving 读取的 source 范围。这两个结果不改变采样，只写入 application metadata，帮助下游理解画布外零填充和实际有效区域。
 
-### 9. CLI 参数与输入 preflight：`465-518`
+### 9. CLI 参数与输入 preflight
 
-`build_parser()` 要求 transform JSON、fixed/moving 输入、五个 output 路径；可选 tile size、插值、preview、overview block、compression 和 overwrite。
+`build_parser()` 要求 transform JSON、fixed/moving 输入和五个 output 路径。可选参数包括通道清单、tile size、插值、preview、overview block、compression 和 overwrite。
 
 `main()` 先检查：
 
@@ -361,9 +373,9 @@ if args.preview_downsample < 1:
     raise ValueError("preview_downsample must be at least 1")
 ```
 
-随后解析 fixed/moving/transform canonical path，调用 `_ensure_outputs_available()`，读取两个 TIFF 的 shape/dtype，再调用 `validate_transform_contract()`。只有所有 preflight 通过后才构造 metadata 和开始创建临时输出。
+随后读取两个 DAPI TIFF 的 shape/dtype，再调用 `validate_transform_contract()`。提供清单时，读取每个二维 TIFF 的尺寸和 dtype，按清单名称生成输出路径。调用 `_ensure_outputs_available()` 一次校验所有计划输出及其是否别名到任何输入。清单模式要求 `--overwrite false`。
 
-### 10. Application metadata：`519-552`
+### 10. Application metadata
 
 metadata 使用独立 schema：
 
@@ -383,18 +395,19 @@ mapping: moving_to_reference
 - valid output bbox；
 - clipped source bounds；
 - `canvas_padding = constant_zero`。
+- 有清单时记录 `channel_manifest` 与 `output.channels`，包含各项输入、输出和 dtype。
 
 这个 JSON 描述的是“transform 如何被应用”，不是新的 registration transform。
 
-### 11. 临时输出、二次验证与原子发布：`553-609`
+### 11. 临时输出、二次验证与逐文件发布
 
-main 使用 `temporary_outputs` 记录五个最终 output 对应的临时路径：
+main 使用 `temporary_outputs` 记录本次 output 对应的临时路径。
 
-1. 写 registered OME-BigTIFF 临时文件。
+1. 为 moving DAPI 和清单条目写 registered OME-BigTIFF 临时文件，逐通道保留原位深。
 2. 创建 preview/QC 临时文件。
 3. 写 application metadata 临时文件。
 4. 再次调用 `validate_transform_contract()`，确认输入与 transform 在整个 application 期间仍符合合同。
-5. 对五个 output 依次调用 `publish_temp_file()`。
+5. 对各 output 依次调用 `publish_temp_file()`。application JSON 最后发布，标记该批输出完成。
 6. 全部发布完成后打印 `Transform application PASS`。
 
 ```python
@@ -415,7 +428,7 @@ except Exception:
     raise
 ```
 
-任何写入、QC、二次验证或 publish 失败都会清理已创建的临时文件，并且不会打印 PASS。只有五个 output 全部成功发布后，函数返回 0。
+任何写入、QC、二次验证或发布失败都会清理尚未发布的临时文件。全部输出成功发布后，函数才返回 0。发布阶段若个别文件最终命名失败，已发布文件会保留，application JSON 仍缺失。
 
 ## 📦 输入、输出与失败契约
 
@@ -449,17 +462,20 @@ P.registration_qc.pdf
 
 25/26 内部调用时，这五个文件会分别带 `.python` 或 `.matlab` backend 前缀；这是调用方传入 prefix 的结果，不是 p29 runner 自己推断 backend 后追加的结果。
 
+提供 `--channel_manifest` 时，每个额外输出为 `P.registered_moving.<label>.ome.tif`。它们与参考 DAPI 共用画布，移出参考画布的像素会裁掉，采样范围以外填 0。原 moving mosaics 保留其完整视野。application JSON 中的 `output.channels` 给出实际结果路径，preview/QC 仍展示 DAPI 配准。
+
 ### 主要失败点
 
 | 阶段 | 失败条件 | 保护结果 |
 | --- | --- | --- |
-| 参数 | 缺少四个 required 参数、插值不为 `0/1` | wrapper 退出 |
+| 参数 | 缺少必传参数、插值不为 `0/1` | wrapper 或 runner 退出 |
 | 文件 | transform/fixed/moving/runner 缺失 | wrapper 退出 |
 | output safety | duplicate、symlink、hard-link alias、input alias、已有文件未允许覆盖 | runner 退出 |
 | transform contract | schema、backend、quality、coordinate、path、shape、dtype、size、mtime、shift 错误 | runner 退出 |
+| channel manifest | 标签冲突、文件不是二维或尺寸异于 moving DAPI | runner 退出，未写入结果 |
 | sampling | tile size 非法、source window 越界或采样失败 | 临时文件清理 |
 | QC | preview、matplotlib、PNG/PDF 写入失败 | 临时文件清理 |
-| publish | 临时文件不是 regular file 或原子发布失败 | 临时文件清理，不发布半成品 |
+| publish | 临时文件不是 regular file 或逐文件发布失败 | 清理临时文件，application JSON 未发布 |
 | wrapper check | 五项输出任一不存在或为空 | `STATUS: FAILED` |
 
 ## 🔗 Cross-step contracts
@@ -468,7 +484,7 @@ P.registration_qc.pdf
 - Step 26 的 p29 调用使用 `P.matlab.transform.json` 和 `.matlab.*` output；详情见 [`26_register_mosaic_matlab_workflow.md`](26_register_mosaic_matlab_workflow.md)。
 - Step 28 只比较两份 backend transform，不产生可应用的 transform；详情见 [`28_compare_mosaic_registration_workflow.md`](28_compare_mosaic_registration_workflow.md)。
 - `p25_register_mosaic_python.py:51-99` 提供 p29 复用的 `TiffWindowReader`，`p25_register_mosaic_python.py:101-161` 提供 p29 QC 使用的 `build_overview`，因此 p25 与 p29 的输入都遵守二维 TIFF/OME-TIFF 和分块读取假设。
-- `tests/test_mosaic_registration.py:156-250` 验证 fixed-canvas application 和误差改善；`:253-435` 验证 identity/coordinate/backend contract；`:438-543` 验证 output safety；`:546-616` 验证插值限制；`:627-721` 验证 resource/help/dry-run 链路。
+- `test_contracts/test_mosaic_channel_reuse.py` 使用真实合成 TIFF 检验金字塔和单层输入、已知平移、跨通道位深、尺寸错配与防覆盖。
 
 ## ✅ 读取本文件后的最短结论
 
@@ -484,4 +500,4 @@ Step 29 不是 registration，而是一个有严格输入合同和原子输出�
   -> Transform application PASS
 ```
 
-它真正保证的是“这份 transform 被安全地应用到了它声明的那一对输入图像上”，而不是保证 transform 本身来自哪一种 registration backend 或两个 backend 彼此一致。
+同轮通道共用 DAPI 的平移参数及参考画布，预览和 QC 对应估计变换时使用的 DAPI 图像。

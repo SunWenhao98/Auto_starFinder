@@ -9,6 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import stat
 import tempfile
 from typing import Iterable, Sequence
@@ -462,11 +463,48 @@ def _clipped_source_bounds(
     }
 
 
+def _read_channel_inputs(
+    manifest: Path, registered_mosaic: Path, moving_shape: Sequence[int]
+) -> dict:
+    def unique_labels(pairs):
+        channels = {}
+        for label, path in pairs:
+            if label in channels:
+                raise ValueError(f"Duplicate channel label in {manifest}: {label!r}")
+            channels[label] = path
+        return channels
+
+    prefix = registered_mosaic.name.removesuffix(".ome.tif")
+    inputs = {}
+    for label, path in json.loads(manifest.read_text(), object_pairs_hook=unique_labels).items():
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", label):
+            raise ValueError(f"Invalid channel label for an output filename: {label!r}")
+        source = (manifest.parent / path).resolve()
+        with TiffWindowReader(source) as reader:
+            # A different shape is a known incompatible grid. Shape alone cannot
+            # establish shared placement; the manifest declares common geometry.
+            if reader.shape != tuple(moving_shape):
+                raise ValueError(
+                    f"{label}: {source} has shape {reader.shape}, "
+                    f"expected moving DAPI shape {tuple(moving_shape)}"
+                )
+            dtype = reader.dtype
+        output = registered_mosaic.with_name(f"{prefix}.{label}.ome.tif")
+        inputs[label] = (source, output, dtype)
+    return inputs
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--transform_json", type=Path, required=True)
     parser.add_argument("--fixed_mosaic", type=Path, required=True)
     parser.add_argument("--moving_mosaic", type=Path, required=True)
+    parser.add_argument(
+        "--channel_manifest",
+        type=Path,
+        help="JSON mapping labels to additional images on the moving DAPI grid. "
+        "Relative image paths are resolved next to the manifest.",
+    )
     parser.add_argument("--output_registered_mosaic", type=Path, required=True)
     parser.add_argument("--output_application_json", type=Path, required=True)
     parser.add_argument("--output_preview_tif", type=Path, required=True)
@@ -487,21 +525,11 @@ def main() -> int:
         raise ValueError("tile_size_px must be a multiple of 16 and at least 16")
     if args.preview_downsample < 1:
         raise ValueError("preview_downsample must be at least 1")
-    outputs = (
-        args.output_registered_mosaic,
-        args.output_application_json,
-        args.output_preview_tif,
-        args.output_qc_png,
-        args.output_qc_pdf,
-    )
+    if args.channel_manifest is not None and args.overwrite:
+        raise ValueError("Channel manifest replay requires --overwrite false")
     fixed_path = args.fixed_mosaic.resolve()
     moving_path = args.moving_mosaic.resolve()
     transform_path = args.transform_json.resolve()
-    _ensure_outputs_available(
-        outputs,
-        overwrite=args.overwrite,
-        protected_paths=(fixed_path, moving_path, transform_path),
-    )
     transform = json.loads(transform_path.read_text())
     with TiffWindowReader(fixed_path) as fixed_reader, TiffWindowReader(
         moving_path
@@ -515,6 +543,25 @@ def main() -> int:
         moving_path,
         fixed_shape,
         moving_shape,
+    )
+    protected = [fixed_path, moving_path, transform_path]
+    channels = {}
+    if args.channel_manifest is not None:
+        manifest_path = args.channel_manifest.resolve()
+        channels = _read_channel_inputs(
+            manifest_path, args.output_registered_mosaic, moving_shape
+        )
+        protected.extend([manifest_path, *(source for source, _, _ in channels.values())])
+    outputs = (
+        args.output_registered_mosaic,
+        args.output_preview_tif,
+        args.output_qc_png,
+        args.output_qc_pdf,
+        *(output for _, output, _ in channels.values()),
+        args.output_application_json,
+    )
+    _ensure_outputs_available(
+        outputs, overwrite=args.overwrite, protected_paths=protected
     )
     metadata = {
         "schema_name": "starfinder_translation_application",
@@ -550,6 +597,16 @@ def main() -> int:
             "canvas_padding": "constant_zero",
         },
     }
+    if args.channel_manifest is not None:
+        metadata["channel_manifest"] = str(manifest_path)
+        metadata["output"]["channels"] = {
+            label: {
+                "source_image": str(source),
+                "registered_mosaic": str(output.resolve()),
+                "dtype": str(dtype),
+            }
+            for label, (source, output, dtype) in channels.items()
+        }
     temporary_outputs: dict[Path, Path] = {}
     try:
         temporary_outputs[args.output_registered_mosaic] = write_registered_mosaic(
@@ -562,6 +619,18 @@ def main() -> int:
             args.interpolation_order,
             args.compression,
         )
+        for label, (source, output, dtype) in channels.items():
+            print(f"Applying DAPI shift to {label}: {source} -> {output}")
+            temporary_outputs[output] = write_registered_mosaic(
+                source,
+                output,
+                fixed_shape,
+                shift_yx,
+                dtype,
+                args.tile_size_px,
+                args.interpolation_order,
+                args.compression,
+            )
         temporary_outputs[args.output_preview_tif] = _unique_temp_path(
             args.output_preview_tif
         )
