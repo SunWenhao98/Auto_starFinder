@@ -169,7 +169,7 @@ def test_three_round_layout_and_shift_wrapper_chain(tmp_path):
     registration = sample / "02_registration_new"
     method = registration / "A_Fiji"
     links = list(method.rglob("Position*.tif"))
-    assert len(links) == 9
+    assert len(links) == 8
     targets = {path: path.resolve(strict=True) for path in links}
     assert all(path.is_symlink() for path in links)
     reference = method / "reference.txt"

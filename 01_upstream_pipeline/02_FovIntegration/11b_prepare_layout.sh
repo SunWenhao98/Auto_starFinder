@@ -111,7 +111,7 @@ prepare_round_layout() {
     case "$CHANNEL_MODE" in
         LeicaIF) CHANNELS="ch00=raw-561-CA9,ch01=raw-488-CD144,ch02=raw-647-CD31,ch03=raw-DAPI" ;;
         OlympusIF) CHANNELS="ch00=raw-488-CD144,ch01=raw-561-CA9,ch02=raw-647-CD31,ch03=raw-DAPI" ;;
-        LeicaSeqE) CHANNELS="ch00=raw-647-GCnt,ch01=raw-561-GTrb,ch02=raw-Padlayer,ch03=raw-DAPI" ;;
+        LeicaSeqE) CHANNELS="ch00=raw-647-GCnt,ch01=raw-561-GTrb,ch03=raw-DAPI" ;;
         LeicaRef) CHANNELS="ch03=raw-refDAPI" ;;
         *) echo "Error: unsupported --channel_mode: $CHANNEL_MODE" >&2; exit 1 ;;
     esac

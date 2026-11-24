@@ -33,13 +33,14 @@ def read_calls(path: Path) -> list[dict]:
 def wrapper_runtime(tmp_path: Path) -> tuple[Path, list[str], dict[str, str]]:
     project_root = tmp_path / "project root"
     work_dir = project_root / "sample" / "02_registration_contract" / "stitching"
-    for channel in ("refDAPI", "DAPI", "561-CA9", "488-CD144", "647-CD31"):
+    for channel in ("refDAPI", "DAPI", "561-CA9", "488-CD144", "647-CD31", "647-GCnt", "561-GTrb"):
         (work_dir / f"raw-{channel}").mkdir(parents=True)
     for name in ("initial.txt", "joint_ref.txt", "joint_IF.txt", "joint_summary.json"):
         (work_dir / name).write_text("input\n", encoding="utf-8")
     script_dir = tmp_path / "runners"
     script_dir.mkdir()
     for runner in (
+        "p24_ashlar_stitch_mosaic.py",
         "p30_ashlar_stitch_mst.py",
         "p31_ashlar_stitch_joint.py",
         "p32_ashlar_stitch_mosaic_joint.py",
@@ -382,7 +383,7 @@ def test_generated_joint_chain_creates_logs_before_submission_and_keeps_dependen
         assert "--seqe_channel_dir" not in calls[1]["argv"]
 
 
-def test_three_round_wrappers_keep_independent_inputs_and_nine_outputs(wrapper_runtime):
+def test_three_round_wrappers_keep_independent_inputs_and_eight_outputs(wrapper_runtime):
     work_dir, common, environment = wrapper_runtime
     result = run_wrapper(
         "31_ashlar_stitch_joint.sh", common,
@@ -407,9 +408,87 @@ def test_three_round_wrappers_keep_independent_inputs_and_nine_outputs(wrapper_r
     )
     assert result.returncode == 0, result.stdout + result.stderr
     calls = read_calls(Path(environment["CAPTURE"]))[1:]
-    assert [c["options"]["--round_name"] for c in calls] == ["ref"] + ["IF"] * 4 + ["seqE"] * 4
+    assert [c["options"]["--round_name"] for c in calls] == ["ref"] + ["IF"] * 4 + ["seqE"] * 3
+    assert [Path(c["options"]["--input_dir"]).name for c in calls[5:]] == [
+        "raw-647-GCnt", "raw-561-GTrb", "raw-DAPI",
+    ]
     prefixes = [c["options"]["--output_image_prefix"] for c in calls]
-    assert len(set(prefixes)) == 9
+    assert len(set(prefixes)) == 8
     assert all(Path(p + "_2d.ome.tif").is_file() for p in prefixes)
     assert all(c["options"]["--tile_transform_json"] == str(work_dir / "joint_ref-IF_summary.json") for c in calls)
     assert all(c["options"]["--config_file"] == str(work_dir / "TileConfiguration.joint_seqE.txt") for c in calls[5:])
+
+
+@pytest.mark.parametrize(
+    "wrapper", ("24_ashlar_stitch_mosaic.sh", "32_ashlar_stitch_mosaic_joint.sh"),
+)
+def test_seqe_mosaic_wrappers_export_three_real_channels_without_placeholder(
+    wrapper, wrapper_runtime,
+):
+    work_dir, common, environment = wrapper_runtime
+    assert not (work_dir / "raw-Padlayer").exists()
+    result = run_wrapper(
+        wrapper, common,
+        ["--channel_mode", "LeicaSeqE", "--input_config", "initial.txt",
+         "--output_prefix", "seqe"],
+        environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = read_calls(Path(environment["CAPTURE"]))
+    assert [Path(call["options"]["--input_dir"]).name for call in calls] == [
+        "raw-647-GCnt", "raw-561-GTrb", "raw-DAPI",
+    ]
+    outputs = [
+        Path(call["options"]["--output_image_prefix"] + "_2d.ome.tif")
+        for call in calls
+    ]
+    assert len(set(outputs)) == 3
+    assert all(path.is_file() for path in outputs)
+
+
+@pytest.mark.parametrize(
+    "channel_mode,expected_channels",
+    [
+        ("LeicaSeqE", ["raw-647-GCnt", "raw-561-GTrb", "raw-DAPI"]),
+        ("DAPI", ["raw-DAPI"]),
+    ],
+)
+def test_fiji_mosaic_exports_selected_real_channels(
+    wrapper_runtime, channel_mode, expected_channels,
+):
+    work_dir, common, environment = wrapper_runtime
+    assert not (work_dir / "raw-Padlayer").exists()
+    script_dir = Path(common[common.index("--script_dir") + 1])
+    (script_dir / "fiji_grid_collection_stitch.bsh").touch()
+    fiji_dir = Path(environment["CAPTURE"]).parent / "fiji"
+    fiji_dir.mkdir()
+    write_executable(
+        fiji_dir / "ImageJ-linux64",
+        """
+        import json
+        import os
+        from pathlib import Path
+
+        input_dir = Path(os.environ["INPUT_DIR"])
+        assert input_dir.is_dir()
+        assert (input_dir / os.environ["LAYOUT_FILE"]).is_file()
+        with open(os.environ["CAPTURE"], "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"input_dir": str(input_dir)}) + "\\n")
+        output = input_dir / (os.environ["OUTPUT_NAME"] + "_2d_Fiji.tif")
+        output.write_text("synthetic fusion\\n", encoding="utf-8")
+        """,
+    )
+    fiji_common = list(common)
+    index = fiji_common.index("--conda_sh")
+    del fiji_common[index:index + 2]
+    result = run_wrapper(
+        "16_fiji_stitch_mosaic.sh", fiji_common,
+        ["--fiji_dir", str(fiji_dir), "--channel_mode", channel_mode,
+         "--input_config", "initial.txt", "--output_prefix", "seqe"],
+        environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = read_calls(Path(environment["CAPTURE"]))
+    assert [Path(call["input_dir"]).name for call in calls] == expected_channels
+    outputs = list((work_dir / "stitched_contract").glob("sample_seqe_*_2d_Fiji.tif"))
+    assert len(outputs) == len(expected_channels)

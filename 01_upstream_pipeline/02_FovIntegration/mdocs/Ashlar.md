@@ -27,7 +27,7 @@ generator 按固定顺序为每个 `JOB_*` 中启用的步骤串联 `afterok`。
 | `23_prepare_moveImages_tileconfig.sh` | 参考精配坐标与选定的逐 FOV 位移日志 | moving 坐标表及同 stem 的 `.shifts.csv` |
 | `16_fiji_stitch_mosaic.sh`、`24_ashlar_stitch_mosaic.sh` | 读取 `11b` 的通道布局，按指定坐标融合 | 各通道拼图 |
 | `31_ashlar_stitch_joint.sh`、`32_ashlar_stitch_mosaic_joint.sh` | 联合求解三轮坐标并按共画布导出 | ref、IF、seqE 的坐标和拼图 |
-| `33_prepare_mosaic_display.sh` | 读取已经同网格的 MIP 或 Z 平面 | 多通道 OME-TIFF、叠加 PNG 和展示预设 |
+| `33_prepare_mosaic_display.sh` | 每轮读取已经同网格的二维 MIP 通道 | 多通道 OME-TIFF、叠加 PNG 和展示预设 |
 
 新提交脚本使用 `11a/11b` 入口。旧脚本执行前应按当前完整 INI 重新生成。
 
@@ -41,7 +41,7 @@ generator 按固定顺序为每个 `JOB_*` 中启用的步骤串联 `afterok`。
 
 ## 11b 的轮次布局
 
-单轮配置使用 `prepare_layout_rawdata_round`、`prepare_layout_channel_mode` 和 `prepare_layout_stitching_workdir`。其中 `LeicaRef` 仅准备 `ch03=raw-refDAPI`，`LeicaIF/OlympusIF` 准备四个 IF 通道，`LeicaSeqE` 准备四个 seqE 通道。
+单轮配置使用 `prepare_layout_rawdata_round`、`prepare_layout_channel_mode` 和 `prepare_layout_stitching_workdir`。其中 `LeicaRef` 仅准备 `ch03=raw-refDAPI`，`LeicaIF/OlympusIF` 准备四个 IF 通道，`LeicaSeqE` 仅准备 ch00=647-GCnt、ch01=561-GTrb、ch03=DAPI 三个真实通道。原始 ch02=Padlayer 继续供解码占位，11a 的四项 panel 保留；拼接层不链接或融合该空白通道。
 
 三轮配置通过 `prepare_layout_round_manifest` 提供 CSV 的完整路径，对应 `--round_manifest`。generator 原样转发路径，wrapper 按清单解析样本内的原始轮次和输出子目录。清单示例如下。
 
@@ -65,7 +65,6 @@ seqE,round011,LeicaSeqE,seqE
   IF/raw-DAPI/PositionXXX.tif
   seqE/raw-647-GCnt/PositionXXX.tif
   seqE/raw-561-GTrb/PositionXXX.tif
-  seqE/raw-Padlayer/PositionXXX.tif
   seqE/raw-DAPI/PositionXXX.tif
 ```
 
@@ -96,6 +95,12 @@ fiji_stitch_mosaic_channel_dir_prefix = IF/raw-
 seqE 的 11a/23 调用使用自己的 moving_round、日志 tag、输出坐标表名，16/24 的通道前缀使用 `seqE/raw-`。单个 JOB 中 generator 每个步骤执行一次，两个 moving 轮分别配置 JOB 或明确调用，11b 的三轮布局清单可以共用。
 
 Ashlar 的对应参数为 `ashlar_stitch_initial_source_channel_dir` 和 `ashlar_stitch_mosaic_channel_dir_prefix`。31/32 使用 `ref/raw-refDAPI`、`IF/raw-`、`seqE/raw-` 的同一布局。
+
+## 同轮 MIP 展示
+
+本批 IF 四通道、seqE 三通道分别调用 33，使用各自的输入清单、profile 和新输出目录，例如 `display_review/IF`、`display_review/seqE`。每次输出二维多通道 `mip.ome.tif`、RGB 叠加 PNG 与 `display_presets.json`；OME 的 C 轴是通道，不是完整 Z 堆栈。generator 每个 JOB 调用 33 一次，两轮使用两个 JOB。
+
+同轮通道必须使用同一套拼接坐标、像素网格和方向。A 路线保留各轮自然画布，不增加强制跨轮统一；B/C 已有画布行为保留。Z 位移日志沿用，不新增指定层补偿。本批配置 `make_3d=false`、`slice_indices=`，以 MIP 为展示交付。一般工具的指定二维层接口保留，但不是本批必需产物。
 
 ## 灰度 TIFF 的读取约定
 

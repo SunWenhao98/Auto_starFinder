@@ -25,7 +25,7 @@ Options:
   --tile_transform_json NAME   joint summary: per-round transforms and shared canvas
   --ref_channel_dir NAME       also stitch this reference-round channel dir ...
   --ref_input_config NAME      ... with this config; both empty = skip
-  --seqe_channel_dir_prefix PREFIX  also export all four seqE channels; empty = skip
+  --seqe_channel_dir_prefix PREFIX  also export the three real seqE channels; empty = skip
   --seqe_input_config NAME     (default TileConfiguration.joint_seqE.txt)
   --script_dir PATH
   --conda_sh PATH
@@ -123,7 +123,7 @@ trap finish EXIT
 case "$CHANNEL_MODE" in
     LeicaIF) CHANNEL_NAMES="561-CA9,488-CD144,647-CD31,DAPI" ;;
     OlympusIF) CHANNEL_NAMES="488-CD144,561-CA9,647-CD31,DAPI" ;;
-    LeicaSeqE) CHANNEL_NAMES="647-GCnt,561-GTrb,Padlayer,DAPI" ;;
+    LeicaSeqE) CHANNEL_NAMES="647-GCnt,561-GTrb,DAPI" ;;
     LeicaIFIndependent) CHANNEL_NAMES="561-CA9,488-CD144,647-CD31" ;;
     OlympusIFIndependent) CHANNEL_NAMES="488-CD144,561-CA9,647-CD31" ;;
     LeicaSeqEIndependent) CHANNEL_NAMES="647-GCnt,561-GTrb" ;;
@@ -220,7 +220,7 @@ for CHANNEL_NAME in "${CHANNEL_ARRAY[@]}"; do
 done
 
 if [[ -n "$SEQE_CHANNEL_DIR_PREFIX" ]]; then
-    for CHANNEL_NAME in 647-GCnt 561-GTrb Padlayer DAPI; do
+    for CHANNEL_NAME in 647-GCnt 561-GTrb DAPI; do
         INPUT_DIR="${WORK_DIR}/${SEQE_CHANNEL_DIR_PREFIX}${CHANNEL_NAME}"
         OUTPUT_IMAGE_PREFIX="${STITCH_RESULT_DIR}/${OUTPUT_PREFIX}_seqE_${CHANNEL_NAME}"
         PY_ARGS=(

@@ -155,6 +155,81 @@ class MosaicDisplayContracts(unittest.TestCase):
                 with Image.open(output / "z020_01_reference.png") as png:
                     self.assertEqual(png.getpixel((1030, 518)), (0, 114, 178) if mapping else (62,) * 3)
 
+    def test_if_and_seqe_mip_reviews_use_independent_round_grids_and_channels(self):
+        rounds = (
+            ("IF", ("561-CA9", "488-CD144", "647-CD31", "DAPI"), (33, 57), np.uint16),
+            ("seqE", ("647-GCnt", "561-GTrb", "DAPI"), (29, 43), np.uint8),
+        )
+        colors = ((230, 159, 0), (86, 180, 233), (0, 114, 178), (204, 121, 167))
+        first_outputs = {}
+        for round_name, channels, shape, dtype in rounds:
+            with self.subTest(round=round_name):
+                directory = self.root / round_name
+                directory.mkdir()
+                yy, xx = np.indices(shape)
+                arrays = [
+                    ((yy * (index + 2) + xx * (index + 3) + index * 31) % 200 + 10)
+                    .astype(dtype)
+                    for index in range(len(channels))
+                ]
+                if dtype == np.uint16:
+                    arrays = [array * 257 for array in arrays]
+                files = {}
+                for channel, array in zip(channels, arrays):
+                    filename = directory / f"{channel}.tif"
+                    tifffile.imwrite(filename, array, photometric="minisblack")
+                    files[channel] = str(filename.relative_to(self.root))
+                self.manifest = self.root / f"{round_name}_mip_inputs.json"
+                self.manifest.write_text(json.dumps({
+                    "pixel_size_um": 0.142,
+                    "planes": {"mip": files},
+                }))
+                self.profile = self.root / f"{round_name}_display_profile.json"
+                maximum = np.iinfo(dtype).max
+                self.profile.write_text(json.dumps({
+                    "channels": {
+                        channel: {"color": list(color), "limits": [0, int(maximum)]}
+                        for channel, color in zip(channels, colors)
+                    },
+                    "overlays": {"all": list(channels)},
+                }))
+                output = self.root / "review" / round_name
+                result = self.run_display(output, "--apply_display_mapping")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(sorted(p.name for p in output.glob("*.ome.tif")), ["mip.ome.tif"])
+                with tifffile.TiffFile(output / "mip.ome.tif") as tif:
+                    series = tif.series[0]
+                    self.assertEqual(series.axes, "CYX")
+                    self.assertEqual(series.shape, (len(channels), *shape))
+                    self.assertEqual(series.dtype, np.dtype(dtype))
+                    np.testing.assert_array_equal(series.asarray(), np.stack(arrays))
+                    xml = ElementTree.fromstring(tif.ome_metadata)
+                    pixels = xml.find(".//{*}Pixels")
+                    self.assertEqual(
+                        (int(pixels.attrib["SizeC"]), int(pixels.attrib["SizeZ"]), int(pixels.attrib["SizeT"])),
+                        (len(channels), 1, 1),
+                    )
+                    self.assertEqual(
+                        [c.attrib["Name"] for c in pixels.findall("{*}Channel")],
+                        list(channels),
+                    )
+                expected_rgb = sum(
+                    array.astype(np.float64)[..., None] / maximum * np.asarray(color)
+                    for array, color in zip(arrays, colors)
+                )
+                expected_rgb = np.rint(np.clip(expected_rgb, 0, 255)).astype(np.uint8)
+                with Image.open(output / "mip_01_all.png") as png:
+                    self.assertEqual((png.mode, png.size), ("RGB", (shape[1], shape[0])))
+                    np.testing.assert_array_equal(np.asarray(png), expected_rgb)
+                presets = json.loads((output / "display_presets.json").read_text())
+                self.assertEqual(list(presets["planes"]), ["mip"])
+                self.assertNotIn("Padlayer", files)
+                if first_outputs:
+                    for filename, data in first_outputs.items():
+                        self.assertEqual(filename.read_bytes(), data)
+                else:
+                    first_outputs = {filename: filename.read_bytes() for filename in output.iterdir()}
+
     def test_large_mosaic_png_uses_a_pyramid_level(self):
         pixels = np.full((65, 2305), 200, dtype=np.uint8)
         tifffile.imwrite(self.root / "large.tif", pixels)

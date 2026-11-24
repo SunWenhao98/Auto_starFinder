@@ -17,7 +17,9 @@ Usage: 33_prepare_mosaic_display.sh --project_root PATH --project_name NAME
     [--subtract_background BOOL] [--apply_display_mapping BOOL]
 
 Manifest, profile and new output directory are relative to the stitching workdir.
-The input images must already be in the same coordinate frame for each plane.
+Run separately for IF (four MIP channels) and seqE (three, without Padlayer).
+Channels in one invocation must share a pixel grid; different rounds may differ.
+Each call writes a multi-channel 2D OME-TIFF and RGB overlay PNG previews.
 USAGE
 }
 

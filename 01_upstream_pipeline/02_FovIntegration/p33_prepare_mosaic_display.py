@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package aligned 2D planes as pyramidal OME-TIFFs and PNG previews."""
+"""Package one round's aligned 2D channels as OME-TIFFs and PNG previews."""
 
 import argparse
 from contextlib import ExitStack, contextmanager

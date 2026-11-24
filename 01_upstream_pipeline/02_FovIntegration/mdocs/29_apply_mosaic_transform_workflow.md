@@ -59,7 +59,13 @@ backend-specific output prefix
 
 `generator_upstream_pipeline.py` 通过 `run_apply_mosaic_transform` 启用第 29 步。它将 `transform_apply_channel_manifest` 原样传给 wrapper 的 `--channel_manifest`，该路径相对于当前样本的 `02_registration<suffix>/`。独立提交时应事先准备 `logs029_mosaic_registration` 日志目录。
 
-方案 B 中，先使用第 15/22 步的 DAPI 拼接坐标为同轮各通道出图，再使用第 25/26 步的 DAPI 全图变换完成轮间重采样。IF 和 seqE 分别用各自的 moving DAPI、transform JSON 与通道清单调用 29。两份变换的 `fixed_path` 都应指向此次比较选定的同一参考轮 DAPI。两次调用使用不同的输出标签，最后得到同尺寸、同坐标原点的参考图、已配准 IF 图和已配准 seqE 图。
+方案 B 先用 DAPI 求本轮跨 FOV 精配坐标，再按该坐标为同轮各通道出图，最后用第 25/26 步的 DAPI 全图变换做轮间重采样。IF 和 seqE 分别使用自己的 moving DAPI、transform JSON 与通道清单；两份变换的 `fixed_path` 都指向选定的同一参考轮 DAPI。
+
+**Fiji 的 moving DAPI 必须与信号采用同一融合网格。** 第 15 步负责求精配坐标，其默认 subpixel=true 导出的 DAPI 可比第 16 步 subpixel=false 的信号图在 XY 各多 1 像素。即使来自同一精配坐标，也不能直接把这份 15 DAPI 当作 16 信号的变换估计输入。已有 16 信号图时，可用 `16 --channel_mode DAPI` 仅补渲染 DAPI，`output_prefix` 设为对应轮次的 `IF` 或 `seqE`，其余输入坐标、通道前缀、FOV 与融合参数沿用同轮信号。通过配置调用时使用 `fiji_stitch_mosaic_channel_mode = DAPI`，无需 generator 额外转发 `channel_names`。
+
+补渲染后，25/26 的 `moving_path` 改指新的 16 DAPI，并重新估计轮间变换；29 必须使用这份新变换、同一新 DAPI 与原 16 信号清单。fixed 参考 DAPI 可继续使用 15 的结果。新计算使用新的输出标签和目录，保留旧变换、应用结果及诊断，不能仅替换 moving 文件后重放旧变换。下一批全新运行可直接用 16 的完整 panel 模式（如 `LeicaIF`、`LeicaSeqE`）在同一次导出中包含 DAPI 和信号通道。
+
+Ashlar 22/24 不涉及上述 Fiji Fusion 的 true/false 差异，无需这一专属补渲染；仍按本轮 DAPI 精配坐标及实际输出核对同轮网格。两条后端的 29 应用完成后，参考、IF、seqE 均映射到选定的参考画布。
 
 例如，将以下 JSON 存在 `02_registration<suffix>/B_IF_channels.json`，在该次 IF 调用配置 `transform_apply_channel_manifest = B_IF_channels.json`。清单中的相对路径以 JSON 文件所在目录为基准，也可提供绝对路径。
 

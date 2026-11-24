@@ -1,77 +1,140 @@
-# 33 Mosaic Display Preparation
+# 33 Per-round MIP Display Preparation
 
-`33_prepare_mosaic_display.sh` 读取 A／B／C 已经对齐的单通道 MIP 或指定 Z 切片，可选扣除背景，再按平面保存多通道金字塔 OME-BigTIFF 和可在 VS Code 直接打开的 PNG 预览。颜色、亮度范围和叠加组合由 `display_presets.json` 提供。
+`33_prepare_mosaic_display.sh` 将同一轮已经拼接的单通道二维 MIP，打包为多通道金字塔 OME-BigTIFF，并按 profile 保存 RGB 叠加 PNG。IF 和 seqE 分别调用现有入口；不增加新的批量接口。
 
-## 输入和启用方式
+## 输入与输出口径
 
-每份输入清单对应某个样本、参考轮和路线。清单中的每一组图必须来自同一个 XY 画布，包括像素尺寸、方向、原点和覆盖范围。33 会检查每组图的 XY 尺寸，但是否同一画布由上游配准与出图过程确定。先对齐，再打包。方案 B 先由 29 把 IF 与 seqE 的图分别对齐到同一 ref 画布，然后在清单里引用其输出。方案 C 可直接引用 32 同一批的图。方案 A 需使用统一画布出图。跨路线联动查看还需共同的展示坐标或已知的坐标映射。
+- IF：561-CA9、488-CD144、647-CD31、DAPI，共四通道。
+- seqE：647-GCnt、561-GTrb、DAPI，共三通道。原始 ch02=Padlayer 供解码占位，11a panel 保持四项；拼接、29 清单及 33 不列入 Padlayer。
+- 每轮内部的像素大小、尺寸、原点、方向和 FOV 布局须一致。IF 与 seqE 可以使用不同 XY 尺寸，分别生成各自的 OME/PNG。
+- 本批只要求二维 MIP 叠加，OME 的 C 轴表示通道，SizeZ=SizeT=1。参考 DAPI 单独保留，不强制与两轮打包。完整三维叠加和 Z 位移补偿不在本批范围。
+- 33 直接读取现成的二维文件，不自行配准或从原始堆栈计算 MIP。通用工具仍支持显式提供的二维 Z 平面，本批清单只列 mip。
 
-`display_inputs.json` 中的路径相对该 JSON 所在目录，也可写绝对路径。每个键代表一张已经输出的 2D 平面。以下是两通道例子，正式审阅可按同一结构列出全部九个通道。清单中的通道顺序决定 OME-TIFF 的 C 轴。
+A 路线沿用每轮自然画布，无需为了展示额外统一跨轮画布。B 使用 29 的既有输出，C 使用 32 的既有输出。33 仅核对同一次调用中图像的尺寸，空间匹配由本轮上游出图过程保证。
+
+## 每轮一份输入清单
+
+清单中的路径相对 JSON 所在目录，也可用绝对路径。输入键的顺序决定 OME-TIFF 的 C 轴。
+
+`display_IF_inputs.json`：
 
 ```json
 {
   "pixel_size_um": 0.142,
   "planes": {
     "mip": {
-      "ref_DAPI": "stitching_results/stitched_joint_refDAPI_2d.ome.tif",
-      "IF_CA9": "stitching_results/stitched_joint_561-CA9_2d.ome.tif"
-    },
-    "z020": {
-      "ref_DAPI": "stitching_results/stitched_joint_refDAPI_z020_2d.ome.tif",
-      "IF_CA9": "stitching_results/stitched_joint_561-CA9_z020_2d.ome.tif"
+      "IF_CA9": "stitching_results/IF_561-CA9_2d.ome.tif",
+      "IF_CD144": "stitching_results/IF_488-CD144_2d.ome.tif",
+      "IF_CD31": "stitching_results/IF_647-CD31_2d.ome.tif",
+      "IF_DAPI": "stitching_results/IF_DAPI_2d.ome.tif"
     }
   }
 }
 ```
 
-`z020` 在例子中表示上游导出的第 20 层。33 直接读取列出的二维文件。不同轮次若起始 Z 或层间距不同，选层须按实际物理深度对应。当前 Fiji 拼接输出以 MIP 为主，Fiji 分支需要提供已经按同一几何导出的 Z 切片才可列入。
+`display_seqE_inputs.json`：
 
-`display_profile.json` 定义每通道的背景参数和显示设置。此处数值仅演示接口。
+```json
+{
+  "pixel_size_um": 0.142,
+  "planes": {
+    "mip": {
+      "seqE_GCnt": "stitching_results/seqE_647-GCnt_2d.ome.tif",
+      "seqE_GTrb": "stitching_results/seqE_561-GTrb_2d.ome.tif",
+      "seqE_DAPI": "stitching_results/seqE_DAPI_2d.ome.tif"
+    }
+  }
+}
+```
+
+示例前缀来自 24；Fiji、B 的 29 或 C 的 32 使用各自实际输出路径。不要仅替换文件扩展名或混用不同方法、不同轮次的画布。
+
+## 每轮一份展示 profile
+
+IF 示例 `display_IF_profile.json`：
 
 ```json
 {
   "channels": {
-    "ref_DAPI": {"color": [86, 180, 233], "limits": [100, 18000]},
-    "IF_CA9": {
-      "background_radius_px": 60,
-      "color": [230, 159, 0],
-      "limits": [20, 5000]
-    }
+    "IF_CA9": {"color": [230, 159, 0]},
+    "IF_CD144": {"color": [0, 158, 115]},
+    "IF_CD31": {"color": [204, 121, 167]},
+    "IF_DAPI": {"color": [86, 180, 233]}
   },
   "overlays": {
-    "DAPI": ["ref_DAPI"],
-    "DAPI and CA9": ["ref_DAPI", "IF_CA9"]
-  },
-  "planes": {
-    "z020": {
-      "channels": {"IF_CA9": {"background_radius_px": 45, "limits": [20, 2800]}}
-    }
+    "all": ["IF_CA9", "IF_CD144", "IF_CD31", "IF_DAPI"],
+    "DAPI and CA9": ["IF_DAPI", "IF_CA9"]
   }
 }
 ```
 
-`planes` 可省略。某平面的 `channels` 按通道覆盖指定字段。该平面也可显式用自己的 `overlays` 替换全局组合，尤其是缺少某通道的分支。比较同一样本、同通道、同类图像时复用同一 profile，避免各图独立拉伸导致强度看起来不同。
+seqE 示例 `display_seqE_profile.json`：
 
-在完整 `batch_config.upstream.ini` 中启用 33。以下字段相对于样本的 `02_registration<suffix>/stitching_workdir` 组织。
-
-```ini
-run_mosaic_display = true
-mosaic_display_stitching_workdir = stitching_joint_compare
-mosaic_display_input_manifest = display_inputs.json
-mosaic_display_profile = display_profile.json
-mosaic_display_output_dirname = display_background_v01
-mosaic_display_subtract_background = true
-mosaic_display_apply_display_mapping = true
+```json
+{
+  "channels": {
+    "seqE_GCnt": {"color": [230, 159, 0]},
+    "seqE_GTrb": {"color": [204, 121, 167]},
+    "seqE_DAPI": {"color": [86, 180, 233]}
+  },
+  "overlays": {
+    "all": ["seqE_GCnt", "seqE_GTrb", "seqE_DAPI"],
+    "translation": ["seqE_GCnt", "seqE_GTrb"]
+  }
+}
 ```
 
-单独运行时只启用 33。在同一个 JOB 中与上游步骤一起启用时，generator 会将 33 接在该 JOB 的前一步成功之后。33 也可用具名参数直接调用 `p33_prepare_mosaic_display.py`，运行环境为 `ashlar`。输出目录每次指定新名称。
+需要调整亮度时，在通道设置中提供 `limits: [lo, hi]`；缺省使用该通道原 dtype 的完整范围。需要扣背景时，提供正的 `background_radius_px`。比较同一样本、同通道的不同方法时复用同一套显示参数。
 
-## 两个开关与输出
+## 配置与生成
 
-- `subtract_background` 开启时，只有 `background_radius_px` 为正的通道执行 white top-hat。方形窗口边长为 `2 × radius_px + 1`，逐块计算使用足够的重叠边界。较宽的弱信号也可能被扣除，先在代表性区域核对。实现基于 [SciPy white top-hat](https://docs.scipy.org/doc/scipy/reference/generated/scipy.ndimage.white_tophat.html)，与 Fiji rolling ball 的参数和像素结果不可直接互换。
-- `apply_display_mapping` 开启时，网页和 PNG 预览使用 profile 里的颜色和亮度上下限。关闭时使用中性灰度和通道原 dtype 的范围。叠加组合在两种状态下均可使用。
-- 每个平面输出一份 `<plane>.ome.tif`。完整分辨率保留通道轴和有效灰度精度，混合 uint8／uint16 时按原数值统一存为 uint16。低分辨率层供缩放浏览。背景处理可关闭，另存一版时可从查看器切换处理前后两个文件。
-- 每个平面的每组叠加输出一张 8 位 RGB PNG，例如 `mip_02_DAPI-and-CA9.png`。PNG 从本次 OME-TIFF 中长边不超过 2048 像素的最高分辨率层生成，小图使用原尺寸。各通道按显示范围映射后按颜色相加，输出限幅到 0–255。VS Code 可直接打开，后续像素级核对使用 OME-TIFF。
+以下片段合并到完整 `batch_config.upstream.ini`。同一样本、方法的两轮使用不同 job_suffix、清单、profile 和输出目录。仅展示时 JOB 只启用 33；B 若需同时应用变换，可在各自 JOB 中先启用 29。
+
+```ini
+[JOB_DISPLAY_IF]
+project_name = SAMPLE
+regDir_suffix = _NEW_SAMPLE
+job_suffix = _SAMPLE_IF_mip
+run_mosaic_display = true
+mosaic_display_stitching_workdir = A_Ashlar
+mosaic_display_input_manifest = display_IF_inputs.json
+mosaic_display_profile = display_IF_profile.json
+mosaic_display_output_dirname = display_review/IF
+
+[JOB_DISPLAY_SEQE]
+project_name = SAMPLE
+regDir_suffix = _NEW_SAMPLE
+job_suffix = _SAMPLE_seqE_mip
+run_mosaic_display = true
+mosaic_display_stitching_workdir = A_Ashlar
+mosaic_display_input_manifest = display_seqE_inputs.json
+mosaic_display_profile = display_seqE_profile.json
+mosaic_display_output_dirname = display_review/seqE
+```
+
+generator 每个 JOB 每个步骤调用一次，使用现有顺序与依赖生成两个独立展示任务，不自动强迫两轮图像同尺寸。目录和文件路径相对于该方法 workdir，输出目录每次使用新名称。
+
+## 两个开关与交付
+
+- `subtract_background` 与 `apply_display_mapping` 独立控制，默认均关闭。
+- 背景扣除使用 white top-hat，方形窗口边长为 `2 × radius_px + 1`，会改变本次展示版 OME 像素。它与 Fiji rolling ball 不属于相同参数定义；先在代表区域选定参数。
+- 显示映射控制 profile 中的颜色和亮度范围，用于 PNG 与显示预设，不改 OME 灰度值。关闭时使用中性灰度和原 dtype 范围。
+- 每轮输出 `mip.ome.tif`，完整分辨率保留有效灰度精度。混合 uint8/uint16 时按原数值存为 uint16。
+- 每个叠加组合输出 8-bit RGB PNG，长边不超过 2048；小图保持原尺寸。PNG 用于 VS Code 快速查看，原尺寸细节保留在 OME 最高分辨率层。
+
+```text
+<method>/display_review/
+  IF/
+    mip.ome.tif
+    mip_01_all.png
+    mip_02_DAPI-and-CA9.png
+    display_presets.json
+  seqE/
+    mip.ome.tif
+    mip_01_all.png
+    mip_02_translation.png
+    display_presets.json
+```
 
 `display_presets.json` 按平面记录图像名、通道顺序和各叠加组合，并在 `png_preview` 中记录 PNG 文件名、尺寸和来源金字塔层。Viv 集成可将预设直接作为图层选项使用。示例中的 `presetUrl` 为已授权文件服务上的 JSON 地址。
 

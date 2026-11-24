@@ -13,6 +13,9 @@ print_usage() {
     cat <<'USAGE'
 Usage: 16_fiji_stitch_mosaic.sh --project_root PATH --project_name NAME --reg_dir_suffix NAME --stitching_workdir NAME --input_config NAME --channel_mode MODE [options]
 
+Modes:
+  DAPI selects only raw-DAPI using the same mosaic fusion grid as signal channels.
+
 Options:
   --channel_names LIST
   --channel_dir_prefix PREFIX
@@ -108,9 +111,10 @@ done
 FIJI_EXECUTABLE="${FIJI_DIR}/ImageJ-linux64"
 if [[ -z "$CHANNEL_NAMES" ]]; then
     case "$CHANNEL_MODE" in
+        DAPI) CHANNEL_NAMES="DAPI" ;;
         LeicaIF) CHANNEL_NAMES="561-CA9,488-CD144,647-CD31,DAPI" ;;
         OlympusIF) CHANNEL_NAMES="488-CD144,561-CA9,647-CD31,DAPI" ;;
-        LeicaSeqE) CHANNEL_NAMES="647-GCnt,561-GTrb,Padlayer,DAPI" ;;
+        LeicaSeqE) CHANNEL_NAMES="647-GCnt,561-GTrb,DAPI" ;;
         LeicaIFIndependent) CHANNEL_NAMES="561-CA9,488-CD144,647-CD31" ;;
         OlympusIFIndependent) CHANNEL_NAMES="488-CD144,561-CA9,647-CD31" ;;
         LeicaSeqEIndependent) CHANNEL_NAMES="647-GCnt,561-GTrb" ;;

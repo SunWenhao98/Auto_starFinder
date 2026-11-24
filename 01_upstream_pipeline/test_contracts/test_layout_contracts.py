@@ -187,7 +187,22 @@ class LayoutContracts(unittest.TestCase):
         self.assertEqual(len(list((output / "IF/raw-DAPI").glob("*.tif"))), 3)
         self.assertEqual(len(list((output / "seqE/raw-DAPI").glob("*.tif"))), 3)
         self.assertTrue((output / "IF/raw-488-CD144/Position002.tif").is_symlink())
-        self.assertTrue((output / "seqE/raw-Padlayer/Position007.tif").is_symlink())
+        self.assertFalse((output / "seqE/raw-Padlayer").exists())
+        self.assertEqual(
+            {path.name for path in (output / "seqE").iterdir() if path.is_dir()},
+            {"raw-647-GCnt", "raw-561-GTrb", "raw-DAPI"},
+        )
+        for position in (1, 3, 7):
+            source_dir = sample / "01_data/round011" / f"Position{position:03d}"
+            placeholder = source_dir / f"sample_Position{position:03d}_ch02.tif"
+            self.assertTrue(placeholder.is_file())
+            np.testing.assert_array_equal(
+                tifffile.imread(placeholder), np.full((5, 7), 1000 * position + 2, dtype=np.uint16),
+            )
+            dapi = output / "seqE/raw-DAPI" / f"Position{position:03d}.tif"
+            self.assertEqual(
+                dapi.resolve(), (source_dir / f"sample_Position{position:03d}_ch03.tif").resolve(),
+            )
 
 
     def test_wrapper_rejects_linked_method_path_components(self):

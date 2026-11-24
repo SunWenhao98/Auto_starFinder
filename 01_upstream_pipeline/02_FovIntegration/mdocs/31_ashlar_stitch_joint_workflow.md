@@ -22,7 +22,6 @@ new_joint_workdir/
   seqE/raw-DAPI/                   # round011 ch03
   seqE/raw-647-GCnt/                # round011 ch00
   seqE/raw-561-GTrb/                # round011 ch01
-  seqE/raw-Padlayer/                # round011 ch02
   seqE/TileConfiguration.initial.txt
 ```
 
@@ -37,7 +36,7 @@ new_joint_workdir/
                                          ↓
                           三份联合 config + summary
                                          ↓
-                       32 wrapper → p32 → 九个单通道 mosaic
+                       32 wrapper → p32 → 八个单通道 MIP mosaic
 ```
 
 1. **读入与节点对应**：每轮分别读取 MIP，按 ref、IF、seqE 连接节点索引。轮内文件名必须唯一；不同轮允许出现同名 FOV。当前 Ashlar 配准使用一个共享 tile XY 尺寸，因此不同轮尺寸不同时明确失败。
@@ -71,7 +70,9 @@ canvas_shape_yx = ceil(max(all_tile_positions + tile_size) - canvas_origin_yx)
 
 同名 FOV 偏移表是位置诊断，经过旋转的图像需要同时应用 tile transform，不能把该表当作旧逐 FOV 纯平移流程的直接替代。
 
-32 的九通道输出前缀分别为 `<prefix>_refDAPI`、`<prefix>_<IF channel>`、`<prefix>_seqE_<seqE channel>`；IF DAPI 与 seqE DAPI 不会撞名。正式图像为 `*_2d.ome.tif` 金字塔图。默认建议 `make_3d=false`；既有 stack 分支的 C/Z 元数据问题不在此次修正范围，不能把 XY 画布检查当作三维输出验收。
+32 输出参考 DAPI 一通道、IF 四通道、seqE 三通道，共八通道。前缀分别为 `<prefix>_refDAPI`、`<prefix>_<IF channel>`、`<prefix>_seqE_<seqE channel>`；IF DAPI 与 seqE DAPI 不会撞名。seqE 的拼接通道固定为 647-GCnt、561-GTrb、DAPI；原始 ch02=Padlayer 与 11a 四项 panel 保留，拼接不处理占位通道。
+
+本批正式图像使用 `*_2d.ome.tif` MIP 金字塔图，`make_3d=false`、`slice_indices=`。33 分别打包 IF 四通道和 seqE 三通道 MIP，输出二维多通道 OME-TIFF 和叠加 PNG。已有 C 路线三轮共画布能力保留，但展示只要求各轮内部通道匹配；不增加完整 3D 叠加或 Z 位移补偿验收。
 
 写入前检查本次目标路径，已有结果直接失败；不提供覆盖开关。输入与输出可同属 workdir，重复计算应换新的工作目录或完整输出名，不能删除旧文件后冒充续跑。
 
@@ -116,6 +117,6 @@ wrapper 主通道组始终对应 31 的 IF/moving 角色；`channel_mode` 只选
 
 ## 验证范围与历史记录
 
-当前测试入口：`test_contracts/test_joint_stitching_contracts.py`（wrapper / generator）、`test_contracts/test_ashlar_tiff_readers.py`（真实灰度 TIFF reader）和 `test_contracts/test_joint_three_round_contracts.py`（真实合成 TIFF / CLI）。真实 reader / CLI 契约需激活 ashlar 环境以设置 Java，并在计算节点运行。reader 契约覆盖二维及 3/4/5/45 层、非正方形宽高、原位深、MIP/指定层/stack 像素和旋转。三轮 CLI 契约保留独立 FOV 清单、已知平移、小旋转、共同画布、实际地标、缺乏匹配失败及防覆盖检查，并增加 3 页堆栈案例，核对真实相对坐标、独立计算的画布范围和三轮地标叠加。测试使用 Ashlar 1.20.0；行为依据实际安装的 `ashlar/reg.py`，可对照[官方 v1.20.0 源码](https://github.com/labsyspharm/ashlar/blob/v1.20.0/ashlar/reg.py)。2026-11-19：9 项 wrapper/generator 契约通过；合成作业 5242827 的 3 项真实 TIFF 行为契约全部通过（18 秒、4 CPU 配额、计算线程 1）。首轮不同覆盖测试曾失败，定位并修正粗配准覆盖边界偏差后重测通过；未通过放宽坐标误差容限处理。诊断日志保存在项目 `02_Upstream/04_stitching/diagnostics/0001_261119_002916_joint_three_round_contracts/`。合成测试通过不等于 GBM 三轮真实数据已验收。
+当前测试入口：`test_contracts/test_joint_stitching_contracts.py`（wrapper / generator）、`test_contracts/test_ashlar_tiff_readers.py`（真实灰度 TIFF reader）和 `test_contracts/test_joint_three_round_contracts.py`（真实合成 TIFF / CLI）。真实 reader / CLI 契约需激活 ashlar 环境以设置 Java，并在计算节点运行。reader 契约覆盖二维及 3/4/5/45 层、非正方形宽高、原位深、MIP/指定层/stack 像素和旋转。三轮 CLI 契约保留独立 FOV 清单、已知平移、小旋转、共同画布、实际地标、缺乏匹配失败及防覆盖检查，并增加 3 页堆栈案例，核对真实相对坐标、独立计算的画布范围和三轮地标叠加。测试使用 Ashlar 1.20.0；行为依据实际安装的 `ashlar/reg.py`，可对照[官方 v1.20.0 源码](https://github.com/labsyspharm/ashlar/blob/v1.20.0/ashlar/reg.py)。2026-11-19：9 项 wrapper/generator 契约通过；合成作业 5242827 的 3 项真实 TIFF 行为契约全部通过（18 秒、4 CPU 配额、计算线程 1）。首轮不同覆盖测试曾失败，定位并修正粗配准覆盖边界偏差后重测通过；未通过放宽坐标误差容限处理。诊断日志保存在项目 `02_Upstream/04_stitching/submit011_261123_205624_stitching_dev_validation/0001_261119_002916_joint_three_round_contracts/`。合成测试通过不等于 GBM 三轮真实数据已验收。
 
 保留原说明中的历史事实：2026-10 的双轮版本曾记录 GBM001–016 连通、跨轮残差中位数 0.18–0.37 px，GBM006–009 约 1 px；GBM001/002 旋转约 −1.35°，GBM003–009、015 约 26–58 mdeg。旧说明还记录不同实现间绝对尺度最多约 60 ppm、跨轮整体平移约 0.3 px 的差异。这些是旧双轮版本的自洽性记录，本次未独立复算，也不能作为新三轮版本或生物学正确性的验收证据。
