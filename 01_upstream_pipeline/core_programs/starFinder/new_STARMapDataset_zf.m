@@ -647,14 +647,16 @@
         
         % 6.5 use DAPI register protein images  
         function obj = NucleiRegistrationProtein( obj, protein_folder, reference_round, sub_dir, dapi_channel, ...
-                                                  input_format, output_format, apply_and_save_images )
+                                                  ref_input_format, moving_input_format, output_format, ...
+                                                  apply_and_save_images )
             fprintf('====Nuclei-based Registration====\n');
 
             % Reference DAPI is ch03 in the raw multi-round image layout.
             fprintf('Loading reference DAPI image from %s...\n', reference_round);
             ref_dapi_path = dir(fullfile(obj.inputPath, reference_round, sub_dir, "*ch03.tif"));
-            ref_dapi = new_LoadMultipageTiff(fullfile(ref_dapi_path(end).folder, ref_dapi_path(end).name), ...
-                                             input_format, output_format, false);
+            reference_dapi = fullfile(ref_dapi_path(end).folder, ref_dapi_path(end).name);
+            ref_dapi = load_nuclei_volume(reference_dapi, ref_input_format, output_format);
+            fprintf(obj.log, 'reference_dapi: %s\n', reference_dapi);
             protein_path = fullfile(obj.inputPath, protein_folder, sub_dir);
             obj.proteinImages = {};
 
@@ -664,14 +666,16 @@
                 protein_imgs = cell(nfiles, 1);
                 for c=1:nfiles
                     curr_path = fullfile(protein_files(c).folder, protein_files(c).name);
-                    protein_imgs{c} = new_LoadMultipageTiff(curr_path, input_format, output_format, false);
+                    protein_imgs{c} = load_nuclei_volume(curr_path, moving_input_format, output_format);
                 end
                 mov = protein_imgs{dapi_channel};
+                moving_dapi = fullfile(protein_files(dapi_channel).folder, protein_files(dapi_channel).name);
             else
                 moving_dapi_path = dir(fullfile(protein_path, sprintf('*ch%02d.tif', dapi_channel - 1)));
-                mov = new_LoadMultipageTiff(fullfile(moving_dapi_path(end).folder, moving_dapi_path(end).name), ...
-                                             input_format, output_format, false);
+                moving_dapi = fullfile(moving_dapi_path(end).folder, moving_dapi_path(end).name);
+                mov = load_nuclei_volume(moving_dapi, moving_input_format, output_format);
             end
+            fprintf(obj.log, 'moving_dapi: %s\n', moving_dapi);
 
             tic;
             if obj.useGPU
@@ -1164,3 +1168,11 @@
     
     
     end
+
+function image = load_nuclei_volume(path, input_format, output_format)
+image = new_LoadMultipageTiff(path, input_format, output_format, false);
+if strcmp(output_format, 'uint16') && isa(image, 'uint8')
+    % Expand the integer container without rescaling the stored pixel values.
+    image = uint16(image);
+end
+end

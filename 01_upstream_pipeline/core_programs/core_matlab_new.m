@@ -91,6 +91,8 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
     
     addParameter(p, 'input_format', defaultinput_format);
     addParameter(p, 'norm_out_format', defaultnorm_outformat);
+    addParameter(p, 'ref_input_format', 'uint16');
+    addParameter(p, 'moving_input_format', 'uint16');
 
     addParameter(p, 'loadFormat', defaultloadFormat); % 'tif' or 'mat'
     addParameter(p, 'norm_mode', defaultNorm_Mode);
@@ -868,20 +870,20 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
     if strcmp(p.Results.mode, 'nuclei_protein_registration')
         %gpuDevice(2)
 
-        % initialize
-        aligned_round_outdir = string(p.Results.aligned_round_outdir);
-        if strlength(strtrim(aligned_round_outdir)) == 0
-            error('aligned_round_outdir is required for nuclei_protein_registration.');
-        end
-        registration_target_tag = regexprep(char(aligned_round_outdir), '[^A-Za-z0-9_.-]', '_');
-        registration_log_file = fullfile(curr_out_path_log, sprintf('log_protein_registration_%s.txt', registration_target_tag));
+        reference_round = sprintf('round%03d', p.Results.ref_round);
+        moving_round = string(p.Results.moving_round);
+        moving_round_tag = regexprep(char(moving_round), '[^A-Za-z0-9_.-]', '_');
+        registration_log_file = fullfile(curr_out_path_log, ...
+            sprintf('log_protein_registration_ref-%s_moving-%s.txt', reference_round, moving_round_tag));
+        fprintf('[OUTPUT] REGISTRATION_LOG_FILE=%s\n', registration_log_file);
 
         sub_dirs = string(p.Results.channel_panel);
-        protein_output_dir = fullfile(output_path, p.Results.aligned_round_outdir);
-        if isfile(registration_log_file) || isfolder(registration_log_file)
-            error('Registration log already exists: %s', registration_log_file);
-        end
         if p.Results.apply_and_save_images
+            aligned_round_outdir = string(p.Results.aligned_round_outdir);
+            if strlength(strtrim(aligned_round_outdir)) == 0
+                error('aligned_round_outdir is required when saving registration images.');
+            end
+            protein_output_dir = fullfile(output_path, aligned_round_outdir);
             image_sub_dirs = sub_dirs;
             image_sub_dirs(end+1) = "ref-DAPI";
             image_output_dirs = fullfile(protein_output_dir, image_sub_dirs);
@@ -905,12 +907,20 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
         end
 
         sdata = new_STARMapDataset_zf(input_path, output_path, 'useGPU', false);
-        sdata.log = fopen(registration_log_file, 'w');
+        % Keep the previous complete log until this solve and write succeed.
+        temporary_log = [tempname(curr_out_path_log), '.nuclei.tmp'];
+        [sdata.log, message] = fopen(temporary_log, 'w');
+        if sdata.log < 0
+            error('Cannot open temporary registration log %s: %s', temporary_log, message);
+        end
+        nuclei_log_cleanup = onCleanup(@() cleanup_nuclei_log(temporary_log, sdata.log));
         fprintf(sdata.log, 'log_protein_registration:\n');
-        fprintf(sdata.log, 'moving_round: %s\n', string(p.Results.moving_round));
-        fprintf(sdata.log, 'aligned_round_outdir: %s\n', aligned_round_outdir);
+        fprintf(sdata.log, 'reference_round: %s\n', reference_round);
+        fprintf(sdata.log, 'moving_round: %s\n', moving_round);
+        fprintf(sdata.log, 'ref_input_format: %s\n', p.Results.ref_input_format);
+        fprintf(sdata.log, 'moving_input_format: %s\n', p.Results.moving_input_format);
+        fprintf(sdata.log, 'norm_out_format: %s\n', p.Results.norm_out_format);
         fprintf(sdata.log, 'channel_panel: %s\n', sub_dirs);
-        fprintf(sdata.log, 'registration_target_tag: %s\n', registration_target_tag);
         fprintf(sdata.log, 'registration_log_file: %s\n', registration_log_file);
         fprintf(sdata.log, 'apply_and_save_images: %d\n', p.Results.apply_and_save_images);
 
@@ -921,16 +931,28 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
             dapi_channel = 4;
         end
 
-        reference_round = sprintf('round%03d', p.Results.ref_round);
-        sdata = sdata.NucleiRegistrationProtein(p.Results.moving_round, reference_round, p.Results.tile, dapi_channel, ...
-                                                p.Results.input_format, p.Results.norm_out_format, ...
+        sdata = sdata.NucleiRegistrationProtein(moving_round, reference_round, p.Results.tile, dapi_channel, ...
+                                                p.Results.ref_input_format, p.Results.moving_input_format, ...
+                                                p.Results.norm_out_format, ...
                                                 p.Results.apply_and_save_images);
 
         if p.Results.apply_and_save_images
             SaveCellImg(protein_output_dir, sdata.proteinImages, p.Results.tile, image_sub_dirs);
+            fprintf(sdata.log, 'aligned_round_outdir: %s\n', aligned_round_outdir);
             fprintf(sdata.log, 'protein images saved.\n');
         end
-        fclose(sdata.log);
+        [message, write_error] = ferror(sdata.log);
+        close_status = fclose(sdata.log);
+        if write_error ~= 0 || close_status ~= 0
+            error('Could not finish registration log %s: %s', temporary_log, message);
+        end
+        % Atomic rename in the same directory replaces only the canonical log path.
+        source = java.io.File(temporary_log);
+        destination = java.io.File(registration_log_file);
+        options = javaArray('java.nio.file.CopyOption', 1);
+        options(1) = java.nio.file.StandardCopyOption.ATOMIC_MOVE;
+        java.nio.file.Files.move(source.toPath(), destination.toPath(), options);
+        clear nuclei_log_cleanup
         fprintf('Protein registration log saved: %s\n', registration_log_file);
         fprintf('Nuclei-protein registration is done!\n');
 
@@ -1279,6 +1301,15 @@ function out = core_matlab_new( sample, mode, tile, xy, z, ref_round, n_chs, n_r
     if strcmp(p.Results.mode,'plot_back')
         pass
     end
+end
+
+function cleanup_nuclei_log(path, file_id)
+if ~isempty(fopen(file_id))
+    fclose(file_id);
+end
+if isfile(path)
+    delete(path);
+end
 end
 
 function publish_mat(output_path, variable_name, image, use_v73)

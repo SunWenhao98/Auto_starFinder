@@ -57,7 +57,7 @@ backend-specific output prefix
 
 ### 独立 wrapper 与方案 B 通道复用
 
-`generator_upstream_pipeline.py` 通过 `run_apply_mosaic_transform` 启用第 29 步。它将 `transform_apply_channel_manifest` 原样传给 wrapper 的 `--channel_manifest`，该路径相对于当前样本的 `02_registration<suffix>/`。独立提交时应事先准备 `logs029_mosaic_registration` 日志目录。
+`generator_upstream_pipeline.py` 通过 `run_apply_mosaic_transform` 启用第 29 步。它将 `transform_apply_channel_manifest` 原样传给 wrapper 的 `--channel_manifest`。可以传工作批次下的绝对路径，也可以传相对于当前样本 `02_registration<suffix>/` 的路径。独立提交时应事先准备 `logs029_mosaic_registration` 日志目录。
 
 方案 B 先用 DAPI 求本轮跨 FOV 精配坐标，再按该坐标为同轮各通道出图，最后用第 25/26 步的 DAPI 全图变换做轮间重采样。IF 和 seqE 分别使用自己的 moving DAPI、transform JSON 与通道清单；两份变换的 `fixed_path` 都指向选定的同一参考轮 DAPI。
 

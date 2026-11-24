@@ -20,14 +20,18 @@ Options:
   --ref_round INT
   --channel_num INT
   --round_num INT
-  --input_format FORMAT
-  --norm_out_format FORMAT
-  --aligned_round_outdir NAME
+  --ref_input_format FORMAT    Reference TIFF input type (default: uint16).
+  --moving_input_format FORMAT Moving TIFF input type (default: uint16).
+  --norm_out_format FORMAT     Working image type (default: uint16, preserves uint8/16 values).
+  --aligned_round_outdir NAME  Image output only when --apply_and_save_images is true.
   --moving_round NAME
   --channel_panel MODE
   --apply_and_save_images BOOL  Apply shifts and save all images (default: false).
   --core_matlab_dir PATH
   -h, --help
+
+The shift log is named by the reference and moving rounds. A successful run
+replaces only that Position's canonical log for the same round pair.
 USAGE
 }
 
@@ -55,8 +59,9 @@ IMAGE_DEPTH="38"
 REF_ROUND="1"
 CHANNEL_NUM="3"
 ROUND_NUM="6"
-INPUT_FORMAT="uint16"
-NORM_OUT_FORMAT="uint8"
+REF_INPUT_FORMAT="uint16"
+MOVING_INPUT_FORMAT="uint16"
+NORM_OUT_FORMAT="uint16"
 ALIGNED_ROUND_OUTDIR="IF"
 MOVING_ROUND="IF"
 CHANNEL_PANEL="OlympusIF"
@@ -74,7 +79,8 @@ while [[ $# -gt 0 ]]; do
         --ref_round) REF_ROUND="$2"; shift 2 ;;
         --channel_num) CHANNEL_NUM="$2"; shift 2 ;;
         --round_num) ROUND_NUM="$2"; shift 2 ;;
-        --input_format) INPUT_FORMAT="$2"; shift 2 ;;
+        --ref_input_format) REF_INPUT_FORMAT="$2"; shift 2 ;;
+        --moving_input_format) MOVING_INPUT_FORMAT="$2"; shift 2 ;;
         --norm_out_format) NORM_OUT_FORMAT="$2"; shift 2 ;;
         --aligned_round_outdir) ALIGNED_ROUND_OUTDIR="$2"; shift 2 ;;
         --moving_round) MOVING_ROUND="$2"; shift 2 ;;
@@ -130,8 +136,6 @@ readarray -t POSITIONS < <(find -L "$DATA_DIR" -maxdepth 1 -type d -name 'Positi
 POSITION_NAME="$(basename "${POSITIONS[$INDEX]}")"
 REGISTRATION_FOLDER="02_registration${REG_DIR_SUFFIX}"
 REG_ROOT="${PROJECT_ROOT}/${PROJECT_NAME}/${REGISTRATION_FOLDER}"
-REGISTRATION_TARGET_TAG="${ALIGNED_ROUND_OUTDIR//[^A-Za-z0-9_.-]/_}"
-REGISTRATION_LOG_FILE="${REG_ROOT}/${POSITION_NAME}/log/log_protein_registration_${REGISTRATION_TARGET_TAG}.txt"
 APPLY_AND_SAVE_IMAGES_MATLAB="false"
 if [[ "${APPLY_AND_SAVE_IMAGES,,}" == "true" ]]; then
     APPLY_AND_SAVE_IMAGES_MATLAB="true"
@@ -149,7 +153,8 @@ echo "[PARAM] IMAGE_DEPTH=${IMAGE_DEPTH}"
 echo "[PARAM] REF_ROUND=${REF_ROUND}"
 echo "[PARAM] CHANNEL_NUM=${CHANNEL_NUM}"
 echo "[PARAM] ROUND_NUM=${ROUND_NUM}"
-echo "[PARAM] INPUT_FORMAT=${INPUT_FORMAT}"
+echo "[PARAM] REF_INPUT_FORMAT=${REF_INPUT_FORMAT}"
+echo "[PARAM] MOVING_INPUT_FORMAT=${MOVING_INPUT_FORMAT}"
 echo "[PARAM] NORM_OUT_FORMAT=${NORM_OUT_FORMAT}"
 echo "[PARAM] ALIGNED_ROUND_OUTDIR=${ALIGNED_ROUND_OUTDIR}"
 echo "[PARAM] MOVING_ROUND=${MOVING_ROUND}"
@@ -157,10 +162,20 @@ echo "[PARAM] CHANNEL_PANEL=${CHANNEL_PANEL}"
 echo "[PARAM] APPLY_AND_SAVE_IMAGES=${APPLY_AND_SAVE_IMAGES_MATLAB}"
 echo "[PARAM] CORE_MATLAB_DIR=${CORE_MATLAB_DIR}"
 echo "[PATH] REG_ROOT=${REG_ROOT}"
-echo "[OUTPUT] REGISTRATION_LOG_FILE=${REGISTRATION_LOG_FILE}"
 
 module purge
 module load matlab/2023a
 
-matlab -batch "addpath(genpath('$CORE_MATLAB_DIR')); core_matlab_new('$PROJECT_NAME', 'nuclei_protein_registration', '$POSITION_NAME', $IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM, '$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log', 'moving_round', '$MOVING_ROUND', 'aligned_round_outdir', '$ALIGNED_ROUND_OUTDIR', 'input_format', '$INPUT_FORMAT', 'norm_out_format', '$NORM_OUT_FORMAT', 'channel_panel', $CHANNEL_PANEL_MATLAB, 'apply_and_save_images', $APPLY_AND_SAVE_IMAGES_MATLAB)"
-[[ -s "$REGISTRATION_LOG_FILE" ]] || { echo "Error: registration log missing or empty: $REGISTRATION_LOG_FILE" >&2; exit 1; }
+printf -v MATLAB_COMMAND '%s ' \
+    "addpath(genpath('$CORE_MATLAB_DIR'));" \
+    "core_matlab_new('$PROJECT_NAME', 'nuclei_protein_registration', '$POSITION_NAME'," \
+    "$IMAGE_WIDTH, $IMAGE_DEPTH, $REF_ROUND, $CHANNEL_NUM, $ROUND_NUM," \
+    "'$PROJECT_ROOT', '01_data', '$REGISTRATION_FOLDER', 'log'," \
+    "'moving_round', '$MOVING_ROUND'," \
+    "'ref_input_format', '$REF_INPUT_FORMAT'," \
+    "'moving_input_format', '$MOVING_INPUT_FORMAT'," \
+    "'norm_out_format', '$NORM_OUT_FORMAT'," \
+    "'channel_panel', $CHANNEL_PANEL_MATLAB," \
+    "'aligned_round_outdir', '$ALIGNED_ROUND_OUTDIR'," \
+    "'apply_and_save_images', $APPLY_AND_SAVE_IMAGES_MATLAB);"
+matlab -batch "$MATLAB_COMMAND"

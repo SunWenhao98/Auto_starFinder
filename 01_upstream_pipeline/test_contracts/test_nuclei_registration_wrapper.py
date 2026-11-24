@@ -23,44 +23,70 @@ def test_new_entrypoint_help_is_runtime_free(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "11a_nuclei_registration.sh" in result.stdout
     assert "--apply_and_save_images" in result.stdout
+    assert "--ref_input_format" in result.stdout
+    assert "--moving_input_format" in result.stdout
+    assert "--norm_out_format" in result.stdout
+    assert "--input_format" not in result.stdout
     assert "STATUS:" not in result.stdout + result.stderr
     assert not list(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize("image_option,matlab_value", [(None, "false"), ("TrUe", "true")])
-def test_offset_log_tag_and_single_image_switch(tmp_path, image_option, matlab_value):
-    result, capture, log_file, image_dir = run_wrapper(tmp_path, image_option)
+@pytest.mark.parametrize(
+    "image_option,matlab_value,formats,expected_formats",
+    [
+        (None, "false", (), ("uint16", "uint16", "uint16")),
+        ("TrUe", "true", ("--moving_input_format", "uint8"), ("uint16", "uint8", "uint16")),
+        (None, "false", ("--moving_input_format", "uint8", "--norm_out_format", "uint8"),
+         ("uint16", "uint8", "uint8")),
+    ],
+)
+def test_offset_round_formats_and_single_image_switch(
+    tmp_path, image_option, matlab_value, formats, expected_formats,
+):
+    result, capture, log_file, image_dir = run_wrapper(tmp_path, image_option, options=formats)
     assert result.returncode == 0, result.stdout + result.stderr
     expression = capture.read_text()
     assert "'Position010'" in expression
     assert "'apply_and_save_images', " + matlab_value in expression
     assert "'aligned_round_outdir', 'A_Fiji/IF'" in expression
-    assert "'input_format', 'uint16', 'norm_out_format', 'uint8'" in expression
+    for option, value in zip(("ref_input_format", "moving_input_format", "norm_out_format"), expected_formats):
+        assert f"'{option}', '{value}'" in expression
     assert "'channel_panel', {'561-CA9', '488-CD144', '647-CD31', 'DAPI'}" in expression
     assert "POSITION_NAME=Position010" in result.stdout
     assert str(log_file) in result.stdout
     assert "STATUS: SUCCESS" in result.stdout
-    assert not image_dir.exists()
+    if matlab_value == "false":
+        assert not image_dir.exists()
 
 
 def test_matlab_failure_is_reported(tmp_path):
-    result, _, log_file, _ = run_wrapper(tmp_path, fail=True)
+    result, _, log_file, _ = run_wrapper(tmp_path, fail=True, old_log="previous completed shift\n")
     assert result.returncode != 0
     assert "STATUS: FAILED" in result.stdout
-    assert not log_file.exists()
+    assert log_file.read_text() == "previous completed shift\n"
 
 
-def run_wrapper(tmp_path, image_option=None, fail=False):
+def test_11a_rejects_the_removed_shared_input_format(tmp_path):
+    result, capture, _, _ = run_wrapper(tmp_path, options=("--input_format", "uint16"))
+    assert result.returncode != 0
+    assert not capture.exists()
+
+
+def run_wrapper(tmp_path, image_option=None, fail=False, options=(), old_log=None):
     project = tmp_path / "project"
     sample = project / "Sample"
     for position in ("Position010", "Position002"):
-        (sample / "01_data" / "round001" / position).mkdir(parents=True)
-    log_file = sample / "02_registration_case" / "Position010" / "log" / "log_protein_registration_A_Fiji_IF.txt"
+        for round_name in ("round001", "round005", "IF"):
+            (sample / "01_data" / round_name / position).mkdir(parents=True)
+    log_file = sample / "02_registration_case" / "Position010" / "log" / "log_protein_registration_ref-round005_moving-IF.txt"
+    if old_log is not None:
+        log_file.parent.mkdir(parents=True)
+        log_file.write_text(old_log)
     capture = tmp_path / "matlab_expression.txt"
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_matlab = fake_bin / "matlab"
-    fake_matlab.write_text("#!/usr/bin/env python3\nimport os, sys\nfrom pathlib import Path\nPath(os.environ['NUCLEI_CAPTURE']).write_text(sys.argv[-1])\nif os.environ['NUCLEI_FAIL'] == 'true':\n    raise SystemExit(9)\npath = Path(os.environ['NUCLEI_LOG'])\npath.parent.mkdir(parents=True, exist_ok=True)\npath.write_text('Shifted by -2 3 -1' + chr(10))\n")
+    fake_matlab.write_text("#!/usr/bin/env python3\nimport os, sys\nfrom pathlib import Path\nPath(os.environ['NUCLEI_CAPTURE']).write_text(sys.argv[-1])\nif os.environ['NUCLEI_FAIL'] == 'true':\n    raise SystemExit(9)\npath = Path(os.environ['NUCLEI_LOG'])\npath.parent.mkdir(parents=True, exist_ok=True)\npath.write_text('Shifted by -2 3 -1' + chr(10))\nprint('Protein registration log saved: ' + str(path))\n")
     fake_matlab.chmod(0o755)
     fake_module = fake_bin / "module"
     fake_module.write_text('#!/bin/bash\nexit 0\n')
@@ -92,5 +118,6 @@ def run_wrapper(tmp_path, image_option=None, fail=False):
     ]
     if image_option is not None:
         command.extend(("--apply_and_save_images", image_option))
+    command.extend(options)
     result = subprocess.run(command, env=environment, capture_output=True, text=True)
     return result, capture, log_file, sample / "02_registration_case" / "A_Fiji"

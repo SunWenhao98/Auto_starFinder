@@ -23,6 +23,11 @@ Options:
 Read the reference round's registered file and write a separate moving-round file,
 e.g. IF/TileConfiguration.moving.IF.Fiji.txt or seqE/TileConfiguration.moving.round011.Fiji.txt.
 The .shifts.csv output inherits that round-labelled stem; never write into the shared initial link.
+Select the successful 11a log by the actual reference/moving round pair, e.g.
+log_protein_registration_ref-round001_moving-IF.txt or
+log_protein_registration_ref-round001_moving-round011.txt in each PositionXXX/log/.
+For a round005 reference use ref-round005. aligned_round_outdir only names optional
+11a image output; it does not affect this log name.
 USAGE
 }
 

@@ -130,8 +130,26 @@ class ApplyMosaicChannelReuse(unittest.TestCase):
         )
 
     def test_wrapper_chain_packages_registered_channels_without_rescaling(self):
+        for path_mode in ("relative", "absolute"):
+            with self.subTest(config_paths=path_mode):
+                self.wrapper_chain(path_mode)
+
+    def wrapper_chain(self, path_mode):
+        external_configs = path_mode == "absolute"
+        output_dir = self.root / f"results_{path_mode}"
+        output_marker = output_dir / self.output_marker.name
+        output_slice = output_dir / self.output_slice.name
+        channel_manifest = self.manifest_path
+        if external_configs:
+            config_dir = Path(self.tempdir.name) / "formal configs"
+            config_dir.mkdir()
+            channel_manifest = config_dir / "channels.json"
+            channel_manifest.write_text(json.dumps({
+                "CA9": str(self.marker_path), "CD31_z020": str(self.slice_path),
+            }))
         conda = self.root / "test conda.sh"
-        conda.write_text("conda() { :; }\n")
+        if not conda.exists():
+            conda.write_text("conda() { :; }\n")
         environment = os.environ.copy()
         environment["PATH"] = f"{Path(sys.executable).parent}:{environment['PATH']}"
         environment.update({
@@ -152,33 +170,36 @@ class ApplyMosaicChannelReuse(unittest.TestCase):
                 "bash", RUNNER_DIR / "29_apply_mosaic_transform.sh", *common,
                 "--transform_json", self.transform_path.name,
                 "--fixed_path", self.fixed_path.name, "--moving_path", self.moving_path.name,
-                "--channel_manifest", self.manifest_path.name,
-                "--output_workdir", self.output_dir.name, "--output_label", "sample",
+                "--channel_manifest", str(channel_manifest) if external_configs else channel_manifest.name,
+                "--output_workdir", output_dir.name, "--output_label", "sample",
                 "--tile_size_px", "16", "--preview_downsample", "2",
                 "--overview_block_px", "32",
             ],
             env=environment, capture_output=True, text=True, timeout=60,
         )
         self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
-        (self.output_dir / "display inputs.json").write_text(json.dumps({
+        display_manifest = (config_dir if external_configs else output_dir) / "display inputs.json"
+        display_profile = (config_dir if external_configs else output_dir) / "display profile.json"
+        display_manifest.write_text(json.dumps({
             "pixel_size_um": 0.142,
             "planes": {
                 "mip": {
                     "ref_DAPI": str(self.fixed_path),
-                    "IF_CA9": self.output_marker.name,
+                    "IF_CA9": str(output_marker) if external_configs else output_marker.name,
                 },
-                "z020": {"IF_CD31": self.output_slice.name},
+                "z020": {"IF_CD31": str(output_slice) if external_configs else output_slice.name},
             },
         }))
-        (self.output_dir / "display profile.json").write_text(json.dumps({
+        display_profile.write_text(json.dumps({
             "channels": {"IF_CA9": {"color": [230, 159, 0], "limits": [0, 63000]}},
             "planes": {"mip": {"overlays": {"review": ["ref_DAPI", "IF_CA9"]}}},
         }))
         display = subprocess.run(
             [
                 "bash", RUNNER_DIR / "33_prepare_mosaic_display.sh", *common,
-                "--stitching_workdir", self.output_dir.name,
-                "--input_manifest", "display inputs.json", "--display_profile", "display profile.json",
+                "--stitching_workdir", output_dir.name,
+                "--input_manifest", str(display_manifest) if external_configs else display_manifest.name,
+                "--display_profile", str(display_profile) if external_configs else display_profile.name,
                 "--output_dirname", "display", "--apply_display_mapping", "true",
             ],
             env=environment, capture_output=True, text=True, timeout=60,
@@ -188,7 +209,7 @@ class ApplyMosaicChannelReuse(unittest.TestCase):
             self.assertRegex(display.stdout, rf"{label}:\s+test")
         self.assertIn("STATUS: SUCCESS", display.stdout)
         self.assertNotIn("STATUS:", display.stderr)
-        output = self.output_dir / "display"
+        output = output_dir / "display"
         np.testing.assert_array_equal(
             tifffile.imread(output / "mip.ome.tif"), np.stack((self.fixed, self.expected(self.marker)))
         )

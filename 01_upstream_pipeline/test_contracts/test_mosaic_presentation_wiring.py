@@ -6,11 +6,18 @@ import shlex
 import subprocess
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_generated_display_depends_on_requested_route_b_application(tmp_path):
+@pytest.mark.parametrize("external_configs", [False, True], ids=["relative", "absolute"])
+def test_generated_display_depends_on_requested_route_b_application(tmp_path, external_configs):
+    config_dir = tmp_path / "formal configs"
+    channel_manifest = str(config_dir / "extra planes.json") if external_configs else "IF/extra planes.json"
+    input_manifest = str(config_dir / "aligned planes.json") if external_configs else "aligned planes.json"
+    display_profile = str(config_dir / "display profile.json") if external_configs else "display profile.json"
     config = configparser.ConfigParser()
     config.read(ROOT / "batch_config.upstream.ini")
     for section in config.sections():
@@ -27,9 +34,10 @@ def test_generated_display_depends_on_requested_route_b_application(tmp_path):
         "job_suffix": "review",
         "regDir_suffix": "_review",
         "run_apply_mosaic_transform": "true",
-        "transform_apply_channel_manifest": "IF/extra planes.json",
+        "transform_apply_channel_manifest": channel_manifest,
         "run_mosaic_display": "true",
-        "mosaic_display_input_manifest": "aligned planes.json",
+        "mosaic_display_input_manifest": input_manifest,
+        "mosaic_display_profile": display_profile,
         "mosaic_display_subtract_background": "true",
         "mosaic_display_apply_display_mapping": "false",
     }
@@ -56,8 +64,9 @@ def test_generated_display_depends_on_requested_route_b_application(tmp_path):
     apply_argv = shlex.split(apply.split(")\n", 1)[0].replace("\\\n", ""))
     display_argv = shlex.split(display.split(")\n", 1)[0].replace("\\\n", ""))
     assert display_argv[4] == "${TRANSFORM_APPLY_JOB_ID}"
-    assert apply_argv[apply_argv.index("--channel_manifest") + 1] == "IF/extra planes.json"
-    assert display_argv[display_argv.index("--input_manifest") + 1] == "aligned planes.json"
+    assert apply_argv[apply_argv.index("--channel_manifest") + 1] == channel_manifest
+    assert display_argv[display_argv.index("--input_manifest") + 1] == input_manifest
+    assert display_argv[display_argv.index("--display_profile") + 1] == display_profile
     assert display_argv[display_argv.index("--subtract_background") + 1] == "true"
     assert display_argv[display_argv.index("--apply_display_mapping") + 1] == "false"
 

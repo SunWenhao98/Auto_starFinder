@@ -12,11 +12,12 @@ set -euo pipefail
 print_usage() {
     cat <<'USAGE'
 Usage: 33_prepare_mosaic_display.sh --project_root PATH --project_name NAME
-    --reg_dir_suffix SUFFIX --stitching_workdir NAME --input_manifest NAME
-    --display_profile NAME --output_dirname NAME --script_dir PATH --conda_sh PATH
+    --reg_dir_suffix SUFFIX --stitching_workdir NAME --input_manifest PATH
+    --display_profile PATH --output_dirname NAME --script_dir PATH --conda_sh PATH
     [--subtract_background BOOL] [--apply_display_mapping BOOL]
 
-Manifest, profile and new output directory are relative to the stitching workdir.
+Manifest and profile accept absolute paths or paths relative to the stitching
+workdir. The new output directory is relative to the stitching workdir.
 Run separately for IF (four MIP channels) and seqE (three, without Padlayer).
 Channels in one invocation must share a pixel grid; different rounds may differ.
 Each call writes a multi-channel 2D OME-TIFF and RGB overlay PNG previews.
@@ -69,8 +70,14 @@ done
 START_TIME=$(date +%s)
 trap finish EXIT
 WORK_DIR="${PROJECT_ROOT}/${PROJECT_NAME}/02_registration${REG_DIR_SUFFIX}/${STITCHING_WORKDIR}"
-MANIFEST_FILE="${WORK_DIR}/${INPUT_MANIFEST}"
-PROFILE_FILE="${WORK_DIR}/${DISPLAY_PROFILE}"
+MANIFEST_FILE="$INPUT_MANIFEST"
+PROFILE_FILE="$DISPLAY_PROFILE"
+if [[ "$MANIFEST_FILE" != /* ]]; then
+    MANIFEST_FILE="${WORK_DIR}/${INPUT_MANIFEST}"
+fi
+if [[ "$PROFILE_FILE" != /* ]]; then
+    PROFILE_FILE="${WORK_DIR}/${DISPLAY_PROFILE}"
+fi
 OUTPUT_DIR="${WORK_DIR}/${OUTPUT_DIRNAME}"
 RUNNER="${SCRIPT_DIR}/p33_prepare_mosaic_display.py"
 

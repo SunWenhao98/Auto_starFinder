@@ -211,7 +211,8 @@ STEP_SPECS = {
         "run_nuclei_registration", "script_nuclei_registration",
         "nuclei_registration", "array", "nuclei_reg", "logs011a_nuclei_registration",
         CORE_MATLAB_ARG + COMMON_ARGS + IMAGE_ARGS + (
-            ("nuclei_reg_input_format", "--input_format"),
+            ("nuclei_reg_ref_input_format", "--ref_input_format"),
+            ("nuclei_reg_moving_input_format", "--moving_input_format"),
             ("nuclei_reg_norm_out_format", "--norm_out_format"),
             ("nuclei_reg_aligned_round_outdir", "--aligned_round_outdir"),
             ("nuclei_reg_moving_round", "--moving_round"),

@@ -14,7 +14,7 @@ print_usage() {
 Usage: 29_apply_mosaic_transform.sh --project_root PATH --project_name NAME --reg_dir_suffix DIR --transform_json PATH --fixed_path PATH --moving_path PATH --output_workdir DIR --output_label NAME [options]
 
 Options:
-  --channel_manifest FILE (relative to the registration directory)
+  --channel_manifest FILE (absolute path or relative to the registration directory)
   --tile_size_px INT
   --interpolation_order INT
   --preview_downsample INT
@@ -161,7 +161,10 @@ COMMAND=(
     --overwrite "$OVERWRITE"
 )
 if [[ -n "$CHANNEL_MANIFEST" ]]; then
-    CHANNEL_MANIFEST_FILE="${REG_ROOT}/${CHANNEL_MANIFEST}"
+    CHANNEL_MANIFEST_FILE="$CHANNEL_MANIFEST"
+    if [[ "$CHANNEL_MANIFEST_FILE" != /* ]]; then
+        CHANNEL_MANIFEST_FILE="${REG_ROOT}/${CHANNEL_MANIFEST}"
+    fi
     echo "[PATH] CHANNEL_MANIFEST_FILE=${CHANNEL_MANIFEST_FILE}"
     COMMAND+=(--channel_manifest "$CHANNEL_MANIFEST_FILE")
 fi

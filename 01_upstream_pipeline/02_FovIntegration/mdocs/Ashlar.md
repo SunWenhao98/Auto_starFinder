@@ -15,11 +15,25 @@ generator 按固定顺序为每个 `JOB_*` 中启用的步骤串联 `afterok`。
 
 `11a` 的位移和 `11b → 12 → 15/22` 的参考精配坐标在 `23` 汇合。IF 与 seqE 分别选择自己的位移日志和 moving 输出坐标表。
 
+正式五方法目录如下；A/B/C 仅用于说明执行路线。
+
+| 方法目录 | 路线 | 处理方式 |
+|---|---|---|
+| `21_reg_stitch_Fiji` | A | 逐FOV配准后，按参考轮Fiji坐标融合 |
+| `22_reg_stitch_Ashlar` | A | 逐FOV配准后，按参考轮Ashlar坐标融合 |
+| `23_stitch_reg_Fiji` | B | 各轮Fiji独立拼接后，估计轮间变换并跨通道复用 |
+| `24_stitch_reg_Ashlar` | B | 各轮Ashlar独立拼接后，估计轮间变换并跨通道复用 |
+| `25_joint_stitch_Ashlar` | C | Ashlar联合求解后导出各轮拼图 |
+
+GBM006–009 的 A 路线 IF 为 N/A：同号FOV已无法对应配准；这些样本的参考轮与seqE仍按各自适用步骤处理。B/C不因这一限制跳过IF。
+
+各方法目录放在样本已有registration根内：GBM001–009、GBM017–026使用 `02_registration001_<sample>`，GBM010–016使用 `02_registration001_<sample>_ref1`；GBM015的round005分支使用 `02_registration002_GBM015_ref5`。INI的 `regDir_suffix` 显式选择该根，不由方法名推断。后续新运行写入这些根内的新方法目录，不移动或覆盖旧方法结果。
+
 ## 步骤职责
 
 | 步骤 | 输入与职责 | 主要输出 |
 |---|---|---|
-| `11a_nuclei_registration.sh` | 同一个 FOV 的参考轮与 moving 轮 DAPI，沿用 DFT 算法估计平移 | `PositionXXX/log/log_protein_registration_<tag>.txt` |
+| `11a_nuclei_registration.sh` | 同一个 FOV 的参考轮与 moving 轮 DAPI，沿用 DFT 算法估计平移 | `PositionXXX/log/log_protein_registration_ref-<round>_moving-<round>.txt` |
 | `11b_prepare_layout.sh` | 按轮次和 panel 准备通道布局 | `PositionXXX.tif` 文件软链接及来源清单 |
 | `12_prepare_tile_config.sh` | 每个样本、方法读取一次参考图列表与 Leica/Olympus metadata | 方法根的 `TileConfiguration.initial.txt`、`tile_summary.csv`、布局图和 fusion-size preflight；各轮的初始文件链接 |
 | `15_fiji_stitch_initial.sh` | 参考 DAPI 与 initial config，运行 Fiji registration/global optimization | 配置指定的 Fiji 精配坐标与参考拼图 |
@@ -35,9 +49,11 @@ generator 按固定顺序为每个 `JOB_*` 中启用的步骤串联 `afterok`。
 
 `nuclei_reg_apply_and_save_images = false` 为默认配置，对应 wrapper 的 `--apply_and_save_images`。每个 FOV 仅读参考 DAPI 与 moving DAPI，记录 `Shifted by`。位移日志沿用 `[rowShift, colShift, zShift]`，单位为像素。
 
+两轮分别通过 `nuclei_reg_ref_input_format` 和 `nuclei_reg_moving_input_format` 指定实际TIFF存储类型，对应 `--ref_input_format` 和 `--moving_input_format`。正式模板中参考轮为uint16、IF为uint8；seqE的moving类型显式设为uint16。`nuclei_reg_norm_out_format=uint16` 是工作图像类型，可容纳上述两种输入的原始像素值，不把uint8输入的0–255范围拉伸为0–65535；旧的单一 `nuclei_reg_input_format` 不再使用。
+
 设为 `true` 时，读取 moving 各通道，应用同一组位移，按原通道顺序和输出命名写出完整图像及 `ref-DAPI`。这些对齐图像使用自己的实体输出目录。`11b` 的原图链接布局供拼接读取。
 
-`nuclei_reg_aligned_round_outdir` 决定位移日志的 tag。IF 与 seqE 使用各自的 tag，`prepare_moveimages_registration_log_name` 显式选择完整日志文件名，例如 `log_protein_registration_IF_ref001.txt`。日志位于各 `PositionXXX/log/` 下。目录名含路径分隔符时，wrapper 与 MATLAB 使用相同的 tag 清洗规则。
+`nuclei_reg_aligned_round_outdir` 仅在显式开启图像保存时命名对齐图像目录。规范位移日志按实际轮次对命名，例如 `log_protein_registration_ref-round001_moving-IF.txt` 和 `log_protein_registration_ref-round001_moving-round011.txt`，位于各 `PositionXXX/log/` 下，并记录实际读取的两轮DAPI路径。成功完成后更新同一轮次对的规范日志，其他旧命名历史日志保留。`prepare_moveimages_registration_log_name` 显式选择23需要读取的完整文件名；参考轮为round005时，两处日志名称均使用 `ref-round005`。
 
 ## 11b 的轮次布局
 
@@ -92,26 +108,30 @@ seqE,round011,LeicaSeqE,seqE
 完整INI默认关闭各步骤；启用三轮布局前，填写上面的CSV，并让各步骤使用同一方法根。单轮直接调用时，须显式匹配11b的输出位置和12的source路径。下面是A Fiji的关联配置片段，合并到完整INI后由generator生成提交脚本。
 
 ```ini
-nuclei_reg_aligned_round_outdir = IF_ref001
-prepare_layout_stitching_workdir = A_Fiji
+nuclei_reg_ref_input_format = uint16
+nuclei_reg_moving_input_format = uint8
+nuclei_reg_norm_out_format = uint16
+nuclei_reg_moving_round = IF
+nuclei_reg_apply_and_save_images = false
+prepare_layout_stitching_workdir = 21_reg_stitch_Fiji
 prepare_layout_round_manifest = /absolute/path/round_layout.csv
-prepare_tile_config_stitching_workdir = A_Fiji
+prepare_tile_config_stitching_workdir = %(prepare_layout_stitching_workdir)s
 prepare_tile_config_source_channel_dir = ref/raw-refDAPI
 prepare_tile_config_output_config = TileConfiguration.initial.txt
-fiji_stitch_initial_stitching_workdir = A_Fiji/ref
+fiji_stitch_initial_stitching_workdir = %(prepare_layout_stitching_workdir)s/ref
 fiji_stitch_initial_source_channel = raw-refDAPI
 fiji_stitch_initial_input_config = TileConfiguration.initial.txt
 fiji_stitch_initial_output_config = TileConfiguration.registered.round001.Fiji.txt
-prepare_moveimages_stitching_workdir = A_Fiji
-prepare_moveimages_registration_log_name = log_protein_registration_IF_ref001.txt
+prepare_moveimages_stitching_workdir = %(prepare_layout_stitching_workdir)s
+prepare_moveimages_registration_log_name = log_protein_registration_ref-round001_moving-IF.txt
 prepare_moveimages_input_config = ref/TileConfiguration.registered.round001.Fiji.txt
 prepare_moveimages_output_config = IF/TileConfiguration.moving.IF.Fiji.txt
-fiji_stitch_mosaic_stitching_workdir = A_Fiji/IF
+fiji_stitch_mosaic_stitching_workdir = %(prepare_layout_stitching_workdir)s/IF
 fiji_stitch_mosaic_input_config = TileConfiguration.moving.IF.Fiji.txt
 fiji_stitch_mosaic_channel_dir_prefix = raw-
 ```
 
-seqE 的 11a/23 调用使用自己的 moving_round和日志tag，23输出设为 `seqE/TileConfiguration.moving.round011.Fiji.txt`；16的workdir为 `A_Fiji/seqE`，读取该文件名，通道前缀仍为 `raw-`。单个JOB中generator每步骤执行一次，moving轮可分别配置JOB或明确调用；只有方法级准备JOB启用12，其余各轮任务复用链接，不再次启用12。现有编排须让各轮初始精配等待这一次12成功。
+seqE 的11a调用设 `nuclei_reg_moving_round=round011`、`nuclei_reg_moving_input_format=uint16`、`nuclei_reg_channel_panel=LeicaSeqE`；23读取 `log_protein_registration_ref-round001_moving-round011.txt`，输出设为 `seqE/TileConfiguration.moving.round011.Fiji.txt`。16的workdir为 `21_reg_stitch_Fiji/seqE`，读取该文件名，通道前缀仍为 `raw-`。单个JOB中generator每步骤执行一次，moving轮可分别配置JOB或明确调用；只有方法级准备JOB启用12，其余各轮任务复用链接，不再次启用12。现有编排须让各轮初始精配等待这一次12成功。
 
 Ashlar使用自己的方法根和相同布局约定；参考精配输出例如 `ref/TileConfiguration.registered.round001.Ashlar.txt`，moving输出例如 `IF/TileConfiguration.moving.IF.Ashlar.txt`。B路线各轮15/22仍分别精配，只共享MAF初始坐标；C路线由31联合求解。31/32在方法根使用 `ref/raw-refDAPI`、`IF/raw-`、`seqE/raw-`。实际参考轮为round005时，所有reference坐标文件名和消费者同步改为round005，不能只写ref而省略轮次。
 
@@ -120,6 +140,8 @@ Ashlar使用自己的方法根和相同布局约定；参考精配输出例如 `
 ## 同轮 MIP 展示
 
 本批 IF 四通道、seqE 三通道分别调用 33，使用各自的输入清单、profile 和新输出目录，例如 `display_review/IF`、`display_review/seqE`。每次输出二维多通道 `mip.ome.tif`、RGB 叠加 PNG 与 `display_presets.json`；OME 的 C 轴是通道，不是完整 Z 堆栈。generator 每个 JOB 调用 33 一次，两轮使用两个 JOB。
+
+33的 `mosaic_display_input_manifest`、`mosaic_display_profile` 接受绝对路径，也保留相对方法工作目录的路径。批次清单和profile保存在工作目录，图像仍留在各方法的数据目录；外置清单内的图像路径宜显式写绝对路径，若写相对路径则以清单自身父目录为基准。29的通道清单同样接受绝对路径，原有相对registration根的路径仍有效；清单内相对通道路径也以通道清单JSON自身的父目录为基准。
 
 同轮通道必须使用同一套拼接坐标、像素网格和方向。A 路线保留各轮自然画布，不增加强制跨轮统一；B/C 已有画布行为保留。Z 位移日志沿用，不新增指定层补偿。本批配置 `make_3d=false`、`slice_indices=`，以 MIP 为展示交付。一般工具的指定二维层接口保留，但不是本批必需产物。
 

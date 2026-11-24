@@ -172,21 +172,26 @@ def test_three_round_layout_and_shift_wrapper_chain(tmp_path):
     assert len(links) == 8
     targets = {path: path.resolve(strict=True) for path in links}
     assert all(path.is_symlink() for path in links)
-    reference = method / "reference.txt"
+    reference = method / "ref" / "TileConfiguration.registered.round001.Fiji.txt"
     reference.write_text("dim = 3\nPosition003.tif; ; (100, 200, 0)\n")
     logs = registration / "Position003" / "log"
     logs.mkdir(parents=True)
-    for role, shift in (("IF", "39 53 -6"), ("seqE", "-2 7 0")):
-        log_name = f"log_protein_registration_{role}.txt"
+    for role, moving_round, shift in (("IF", "IF", "39 53 -6"), ("seqE", "round011", "-2 7 0")):
+        log_name = f"log_protein_registration_ref-round001_moving-{moving_round}.txt"
+        output_name = f"TileConfiguration.moving.{moving_round}.Fiji.txt"
         (logs / log_name).write_text(f"Shifted by {shift}\n")
         result = subprocess.run(
             ["bash", str(RUNNER.parent / "23_prepare_moveImages_tileconfig.sh"), *common,
-             "--registration_log_name", log_name, "--input_config", reference.name,
-             "--output_config", f"{role}.moving.txt"],
+             "--registration_log_name", log_name, "--input_config", str(reference.relative_to(method)),
+             "--output_config", f"{role}/{output_name}"],
             env=environment, capture_output=True, text=True, timeout=30,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert (method / f"{role}.moving.shifts.csv").is_file()
+        output = method / role / output_name
+        assert output.with_suffix(".shifts.csv").is_file()
+        shifted_coordinates = shifted.parse_tile_config(output)
+        expected = (153, 239, -6) if role == "IF" else (107, 198, 0)
+        assert tuple(shifted_coordinates[0][axis] for axis in ("x", "y", "z")) == expected
     assert {path: path.resolve(strict=True) for path in links} == targets
     assert all(path.read_bytes() == b"source pixels" for path in targets.values())
 
@@ -206,9 +211,12 @@ def test_generator_forwards_new_semantic_options(tmp_path):
         "run_nuclei_registration": "true",
         "run_prepare_layout": "true",
         "run_prepare_moveimages": "true",
-        "nuclei_reg_aligned_round_outdir": "IF_ref001",
+        "nuclei_reg_ref_input_format": "uint16",
+        "nuclei_reg_moving_input_format": "uint8",
+        "nuclei_reg_norm_out_format": "uint16",
+        "nuclei_reg_aligned_round_outdir": "A_Fiji/IF",
         "prepare_layout_round_manifest": str(tmp_path / "rounds.csv"),
-        "prepare_moveimages_registration_log_name": "log_protein_registration_IF_ref001.txt",
+        "prepare_moveimages_registration_log_name": "log_protein_registration_ref-round001_moving-IF.txt",
     })
     config["JOB_TEST"] = {
         "project_name": "Sample", "regDir_suffix": "_new", "job_suffix": "test",
@@ -227,7 +235,11 @@ def test_generator_forwards_new_semantic_options(tmp_path):
     assert script.index("11a_nuclei_registration.sh") < script.index("11b_prepare_layout.sh")
     assert script.index("11b_prepare_layout.sh") < script.index("23_prepare_moveImages_tileconfig.sh")
     assert "--apply_and_save_images false" in script
+    assert "--ref_input_format uint16" in script
+    assert "--moving_input_format uint8" in script
+    assert "--norm_out_format uint16" in script
+    assert "--input_format " not in script
     assert "--layout_mode symlink" in script
     assert "--round_manifest" in script
-    assert "--registration_log_name log_protein_registration_IF_ref001.txt" in script
+    assert "--registration_log_name log_protein_registration_ref-round001_moving-IF.txt" in script
     subprocess.run(["bash", "-n", str(output)], check=True)
