@@ -286,7 +286,7 @@ def test_generated_joint_chain_creates_logs_before_submission_and_keeps_dependen
         if three_round:
             defaults[key] = value
         else:
-            defaults.pop(key, None)
+            parser.remove_option("DEFAULT", key)
     for stage, _ in STAGES:
         defaults[f"run_{stage}"] = "true"
     parser["JOB_TEST"] = {
@@ -397,12 +397,15 @@ def test_three_round_wrappers_keep_independent_inputs_and_eight_outputs(wrapper_
     assert options["--if_config_file"] == str(work_dir / "IF/initial.txt")
     assert options["--seqe_dir"] == str(work_dir / "seqE/raw-DAPI")
     assert options["--seqe_config_file"] == str(work_dir / "seqE/initial.txt")
-    assert (work_dir / "TileConfiguration.joint_seqE.txt").is_file()
+    assert options["--ref_config_name"] == "TileConfiguration.registered.round001.AshlarJoint.txt"
+    assert options["--if_config_name"] == "TileConfiguration.registered.IF.AshlarJoint.txt"
+    assert options["--seqe_config_name"] == "TileConfiguration.registered.round011.AshlarJoint.txt"
+    assert (work_dir / options["--seqe_config_name"]).is_file()
     result = run_wrapper(
         "32_ashlar_stitch_mosaic_joint.sh", common,
-        ["--channel_mode", "LeicaIF", "--input_config", "TileConfiguration.joint_IF.txt",
+        ["--channel_mode", "LeicaIF", "--input_config", "TileConfiguration.registered.IF.AshlarJoint.txt",
          "--channel_dir_prefix", "IF/raw-", "--ref_channel_dir", "ref/raw-refDAPI",
-         "--ref_input_config", "TileConfiguration.joint_ref.txt",
+         "--ref_input_config", "TileConfiguration.registered.round001.AshlarJoint.txt",
          "--seqe_channel_dir_prefix", "seqE/raw-", "--tile_transform_json", "joint_ref-IF_summary.json"],
         environment,
     )
@@ -416,7 +419,7 @@ def test_three_round_wrappers_keep_independent_inputs_and_eight_outputs(wrapper_
     assert len(set(prefixes)) == 8
     assert all(Path(p + "_2d.ome.tif").is_file() for p in prefixes)
     assert all(c["options"]["--tile_transform_json"] == str(work_dir / "joint_ref-IF_summary.json") for c in calls)
-    assert all(c["options"]["--config_file"] == str(work_dir / "TileConfiguration.joint_seqE.txt") for c in calls[5:])
+    assert all(c["options"]["--config_file"] == str(work_dir / "TileConfiguration.registered.round011.AshlarJoint.txt") for c in calls[5:])
 
 
 @pytest.mark.parametrize(

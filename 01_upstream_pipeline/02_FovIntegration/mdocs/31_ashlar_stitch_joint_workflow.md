@@ -6,26 +6,31 @@
 
 ## 输入与准备
 
-三轮需要各自的 DAPI tile 目录和名义 TileConfiguration。每份 config 的文件名、坐标与该轮实际 FOV 对应；不要求三轮同名、同数量，不先取交集。MAF 的物理 Position 身份与样本 offset 必须在准备时核对，不能用过滤后的细胞矩阵清单替代原始拍摄清单。
+三轮需要各自的DAPI tile目录和对应的名义TileConfiguration。31求解器本身保留独立FOV/config输入能力，不要求三轮同名、同数量，也不先取交集。以下标准共享准备方式要求各轮Position覆盖与方法根initial一致，由12在建立链接的边界核对；覆盖不一致时停止并先厘清FOV，不能用共享链接静默省略图像。MAF的物理Position身份与样本offset在准备时核对，不能用过滤后的细胞矩阵清单替代原始拍摄清单。
 
-推荐在新的 stitching workdir 内使用以下实体子目录；本流程不会创建这份输入布局：
+推荐在新的stitching workdir内使用以下实体子目录；11b准备通道布局，12生成初始配置及其链接，31/32读取这些输入：
 
 ```text
 new_joint_workdir/
+  TileConfiguration.initial.txt    # 本方法运行一次12的名义坐标
+  tile_summary.csv
   ref/raw-refDAPI/                  # 参考轮 ch03
-  ref/TileConfiguration.initial.txt
+  ref/TileConfiguration.initial.txt -> ../TileConfiguration.initial.txt
+  ref/tile_summary.csv -> ../tile_summary.csv
   IF/raw-DAPI/                     # IF ch03
   IF/raw-561-CA9/                   # IF ch00
   IF/raw-488-CD144/                 # IF ch01
   IF/raw-647-CD31/                  # IF ch02
-  IF/TileConfiguration.initial.txt
+  IF/TileConfiguration.initial.txt -> ../TileConfiguration.initial.txt
+  IF/tile_summary.csv -> ../tile_summary.csv
   seqE/raw-DAPI/                   # round011 ch03
   seqE/raw-647-GCnt/                # round011 ch00
   seqE/raw-561-GTrb/                # round011 ch01
-  seqE/TileConfiguration.initial.txt
+  seqE/TileConfiguration.initial.txt -> ../TileConfiguration.initial.txt
+  seqE/tile_summary.csv -> ../tile_summary.csv
 ```
 
-`11b` 的 IF 和 seqE 模式都会生成 `raw-DAPI`，因此两轮分别使用独立子目录。三轮布局可通过 `11b` 的 `round_manifest` 一次准备，名义 config 仍分别对应各轮实际 FOV。保留原始位深时，准备与出图都选择 `preserve`；已转为 uint8 的输入无法通过后续转回 uint16 恢复精度。
+`11b`的IF和seqE模式都会生成 `raw-DAPI`，因此两轮使用独立子目录。三轮布局通过11b的轮次清单准备；12读取参考DAPI、在本方法根计算一次名义坐标，复用同一清单在成功后创建各轮相对链接。其它方法独立运行自己的12，不跨方法共享；其它轮次任务不重复启用12。名义summary与布局图、preflight也只计算一次。保留原始位深时，准备与出图都选择 `preserve`；已转为uint8的输入无法通过后续转回uint16恢复精度。
 
 每通道 TIFF 按二维 `Y,X` 或灰度堆栈 `Z,Y,X` 读取。31 通过 30 的 reader 使用 `tifffile.imread()`，32 同样直接读取 TIFF，3/4 页堆栈不会再经过 skimage 的自动换轴。普通多页 TIFF 的 `QYX` 元数据沿用本流程的 Z 页堆栈语义；配准使用 MIP，指定层与 stack 按 Z 选择。
 
@@ -60,9 +65,9 @@ canvas_shape_yx = ceil(max(all_tile_positions + tile_size) - canvas_origin_yx)
 
 | 输出 | 含义 |
 |---|---|
-| `TileConfiguration.joint_ref.txt` | ref 全部 FOV 的联合坐标 |
-| `TileConfiguration.joint_IF.txt` | IF 全部 FOV 的联合坐标 |
-| `TileConfiguration.joint_seqE.txt` | seqE 全部 FOV 的联合坐标，启用 seqE 时生成 |
+| `TileConfiguration.registered.round001.AshlarJoint.txt` | ref 全部 FOV 的联合坐标 |
+| `TileConfiguration.registered.IF.AshlarJoint.txt` | IF 全部 FOV 的联合坐标 |
+| `TileConfiguration.registered.round011.AshlarJoint.txt` | seqE 全部 FOV 的联合坐标，启用 seqE 时生成 |
 | `<prefix>_summary.json` | 各轮输入、配置、变换、收敛状态、共同画布与边组残差 |
 | `<prefix>_coordinates.csv`、`_<round>_coordinates.csv` | 联合及各轮位置；行键是 round + filename |
 | `<prefix>_if_fov_shifts.csv`、`_seqe_fov_shifts.csv` | 同名 ref 对照及各自名义位置的偏移；无同名 ref 时 `has_matching_ref=false`、对应参考坐标为空，不删除该 FOV |
@@ -81,6 +86,13 @@ canvas_shape_yx = ceil(max(all_tile_positions + tile_size) - canvas_origin_yx)
 以下为完整批配置中需要调整的项，不是可独立提交的完整 INI。先准备三轮输入，再生成 31 → 32 的任务链；不要把本示例指向已有生产输出目录。
 
 ```ini
+run_prepare_layout = true
+run_prepare_tile_config = true
+prepare_layout_stitching_workdir = new_joint_workdir
+prepare_layout_round_manifest = /absolute/path/round_layout.csv
+prepare_tile_config_stitching_workdir = new_joint_workdir
+prepare_tile_config_source_channel_dir = ref/raw-refDAPI
+prepare_tile_config_output_config = TileConfiguration.initial.txt
 run_ashlar_joint_stitch = true
 run_ashlar_joint_mosaic = true
 ashlar_joint_stitch_stitching_workdir = new_joint_workdir
@@ -90,20 +102,20 @@ ashlar_joint_stitch_input_config = ref/TileConfiguration.initial.txt
 ashlar_joint_stitch_if_input_config = IF/TileConfiguration.initial.txt
 ashlar_joint_stitch_seqe_channel_dir = seqE/raw-DAPI
 ashlar_joint_stitch_seqe_input_config = seqE/TileConfiguration.initial.txt
-ashlar_joint_stitch_output_ref_config = TileConfiguration.joint_ref.txt
-ashlar_joint_stitch_output_if_config = TileConfiguration.joint_IF.txt
-ashlar_joint_stitch_output_seqe_config = TileConfiguration.joint_seqE.txt
-ashlar_joint_stitch_output_prefix = joint_ref-IF-seqE
+ashlar_joint_stitch_output_ref_config = TileConfiguration.registered.round001.AshlarJoint.txt
+ashlar_joint_stitch_output_if_config = TileConfiguration.registered.IF.AshlarJoint.txt
+ashlar_joint_stitch_output_seqe_config = TileConfiguration.registered.round011.AshlarJoint.txt
+ashlar_joint_stitch_output_prefix = joint_round001-IF-round011
 
 ashlar_joint_mosaic_stitching_workdir = new_joint_workdir
 ashlar_joint_mosaic_channel_mode = LeicaIF
 ashlar_joint_mosaic_channel_dir_prefix = IF/raw-
-ashlar_joint_mosaic_input_config = TileConfiguration.joint_IF.txt
+ashlar_joint_mosaic_input_config = TileConfiguration.registered.IF.AshlarJoint.txt
 ashlar_joint_mosaic_ref_channel_dir = ref/raw-refDAPI
-ashlar_joint_mosaic_ref_input_config = TileConfiguration.joint_ref.txt
+ashlar_joint_mosaic_ref_input_config = TileConfiguration.registered.round001.AshlarJoint.txt
 ashlar_joint_mosaic_seqe_channel_dir_prefix = seqE/raw-
-ashlar_joint_mosaic_seqe_input_config = TileConfiguration.joint_seqE.txt
-ashlar_joint_mosaic_tile_transform_json = joint_ref-IF-seqE_summary.json
+ashlar_joint_mosaic_seqe_input_config = TileConfiguration.registered.round011.AshlarJoint.txt
+ashlar_joint_mosaic_tile_transform_json = joint_round001-IF-round011_summary.json
 ashlar_joint_mosaic_stitch_result_dirname = stitching_results
 ashlar_joint_mosaic_output_prefix = stitched_joint
 ashlar_joint_mosaic_output_format = preserve
@@ -113,7 +125,7 @@ ashlar_joint_mosaic_slice_indices =
 
 wrapper 主通道组始终对应 31 的 IF/moving 角色；`channel_mode` 只选择通道名称，因此旧双轮中将 seqE 当作 moving 的调用也保持此语义。新增 seqE 前缀才启用第三轮。未设置 seqE 输入时，31 保留两轮调用能力；IF 未另给 config 时仍使用参考 config。新生成的两轮 summary 也采用共同画布。32 仍可读取旧 summary：ref 不应用 IF 变换，IF 使用旧变换，两轮保留旧式独立画布；旧 summary 不可用于 seqE。不传 summary 时保留直接拼图的独立画布行为，不能宣称可直接叠加。
 
-新三轮结果若用于 reads 整合，须同步采用本次 `TileConfiguration.joint_ref.txt` 及对应画布原点。不能把新图像直接套在旧矩阵坐标上；本次代码扩展不重跑 reads 整合。
+新三轮结果若用于reads整合，`cellreads_registration_if_dirname` 指向方法根，`cellreads_registered_tile_config` 采用本次 `TileConfiguration.registered.round001.AshlarJoint.txt` 及对应画布原点。参考轮改变时同步修改文件名，例如round005参考写为 `TileConfiguration.registered.round005.AshlarJoint.txt`。不能把新图像直接套在旧矩阵坐标上；本次代码扩展不重跑 reads 整合。
 
 ## 验证范围与历史记录
 

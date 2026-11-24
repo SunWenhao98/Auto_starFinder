@@ -26,7 +26,7 @@ Options:
   --ref_channel_dir NAME       also stitch this reference-round channel dir ...
   --ref_input_config NAME      ... with this config; both empty = skip
   --seqe_channel_dir_prefix PREFIX  also export the three real seqE channels; empty = skip
-  --seqe_input_config NAME     (default TileConfiguration.joint_seqE.txt)
+  --seqe_input_config NAME     (default TileConfiguration.registered.round011.AshlarJoint.txt)
   --script_dir PATH
   --conda_sh PATH
   -h, --help
@@ -67,7 +67,7 @@ TILE_TRANSFORM_JSON=""
 REF_CHANNEL_DIR=""
 REF_INPUT_CONFIG=""
 SEQE_CHANNEL_DIR_PREFIX=""
-SEQE_INPUT_CONFIG="TileConfiguration.joint_seqE.txt"
+SEQE_INPUT_CONFIG="TileConfiguration.registered.round011.AshlarJoint.txt"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in

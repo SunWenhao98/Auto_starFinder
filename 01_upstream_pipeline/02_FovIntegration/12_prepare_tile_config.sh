@@ -14,6 +14,7 @@ print_usage() {
 Usage: 12_prepare_tile_config.sh --project_root PATH --project_name NAME --reg_dir_suffix NAME --stitching_workdir NAME --source_channel_dir NAME --match_string TEXT --pixel_size_um FLOAT --image_xy INT --overlap_ratio FLOAT --output_config NAME [options]
 
 Options:
+  --round_manifest PATH      Existing 11b CSV; expose initial config/summary in each subdir
   --invert_y BOOL
   --maf_file FILE
   --position_offset INT
@@ -23,6 +24,10 @@ Options:
   --script_dir PATH
   --conda_sh PATH
   -h, --help
+
+Run once per method root. For ref/IF/seqE layouts use --source_channel_dir
+ref/raw-refDAPI and --output_config TileConfiguration.initial.txt. The round
+links are read-only inputs; registered/moving outputs belong to each round.
 USAGE
 }
 
@@ -52,6 +57,7 @@ PIXEL_SIZE_UM=""
 IMAGE_XY=""
 OVERLAP_RATIO=""
 OUTPUT_CONFIG=""
+ROUND_MANIFEST=""
 INVERT_Y="false"
 MAF_FILE=""
 POSITION_OFFSET="0"
@@ -73,6 +79,7 @@ while [[ $# -gt 0 ]]; do
         --image_xy) IMAGE_XY="$2"; shift 2 ;;
         --overlap_ratio) OVERLAP_RATIO="$2"; shift 2 ;;
         --output_config) OUTPUT_CONFIG="$2"; shift 2 ;;
+        --round_manifest) ROUND_MANIFEST="$2"; shift 2 ;;
         --invert_y) INVERT_Y="$2"; shift 2 ;;
         --maf_file) MAF_FILE="$2"; shift 2 ;;
         --position_offset) POSITION_OFFSET="$2"; shift 2 ;;
@@ -107,10 +114,6 @@ finish() {
 }
 trap finish EXIT
 
-for value in PROJECT_ROOT PROJECT_NAME REG_DIR_SUFFIX SCRIPT_DIR CONDA_SH STITCHING_WORKDIR SOURCE_CHANNEL_DIR MATCH_STRING PIXEL_SIZE_UM IMAGE_XY OVERLAP_RATIO OUTPUT_CONFIG; do
-    [[ -n "${!value}" ]] || { echo "Error: ${value} is required" >&2; exit 1; }
-done
-
 REGISTRATION_FOLDER="02_registration${REG_DIR_SUFFIX}"
 REG_ROOT="${PROJECT_ROOT}/${PROJECT_NAME}/${REGISTRATION_FOLDER}"
 WORK_DIR="${REG_ROOT}/${STITCHING_WORKDIR}"
@@ -121,6 +124,7 @@ PREFLIGHT_REPORT_FILE="${WORK_DIR}/${FIJI_FUSION_PREFLIGHT_REPORT}"
 COMMON_ARGS=(
     --input_dir "$INPUT_DIR"
     --output_dir "$WORK_DIR"
+    --output_config "$OUTPUT_CONFIG"
     --match_string "$MATCH_STRING"
     --pixel_size_um "$PIXEL_SIZE_UM"
     --image_xy "$IMAGE_XY"
@@ -140,6 +144,7 @@ echo "[PARAM] PIXEL_SIZE_UM=${PIXEL_SIZE_UM}"
 echo "[PARAM] IMAGE_XY=${IMAGE_XY}"
 echo "[PARAM] OVERLAP_RATIO=${OVERLAP_RATIO}"
 echo "[PARAM] OUTPUT_CONFIG=${OUTPUT_CONFIG}"
+echo "[PATH] ROUND_MANIFEST=${ROUND_MANIFEST}"
 echo "[PARAM] INVERT_Y=${INVERT_Y}"
 echo "[PARAM] MAF_FILE=${MAF_FILE}"
 echo "[PARAM] POSITION_OFFSET=${POSITION_OFFSET}"
@@ -167,17 +172,12 @@ echo "[PATH] SCRIPT_DIR=${SCRIPT_DIR}"
 echo "[PATH] CONDA_SH=${CONDA_SH}"
 echo "[PATH] PY_SCRIPT=${PY_SCRIPT}"
 
-[[ -d "$INPUT_DIR" ]] || { echo "Error: input directory not found: $INPUT_DIR" >&2; exit 1; }
-[[ -f "$PY_SCRIPT" ]] || { echo "Error: runner not found: $PY_SCRIPT" >&2; exit 1; }
-[[ -f "$CONDA_SH" ]] || { echo "Error: conda initialization script not found: $CONDA_SH" >&2; exit 1; }
-
 source "$CONDA_SH"
 set +u
 conda activate data_analysis_env
 set -u
 
 python -u "$PY_SCRIPT" "${COMMON_ARGS[@]}" "${MICROSCOPE_ARGS[@]}"
-cp "${WORK_DIR}/TileConfiguration.txt" "$OUTPUT_CONFIG_FILE"
 echo "OUTPUT_CONFIG: ${OUTPUT_CONFIG_FILE}"
 [[ -s "$OUTPUT_CONFIG_FILE" ]] || { echo "Error: output config missing or empty: $OUTPUT_CONFIG_FILE" >&2; exit 1; }
 
@@ -187,4 +187,17 @@ if [[ "$RUN_FIJI_FUSION_PREFLIGHT" == "true" ]]; then
         --image_xy "$IMAGE_XY" \
         --report_file "$PREFLIGHT_REPORT_FILE"
     [[ -s "$PREFLIGHT_REPORT_FILE" ]] || { echo "Error: preflight report missing or empty: $PREFLIGHT_REPORT_FILE" >&2; exit 1; }
+fi
+
+# Keep one coordinate source per method; expose it only after 12 has completed.
+if [[ -n "$ROUND_MANIFEST" ]]; then
+    python -u - "$SCRIPT_DIR" "$WORK_DIR" "$ROUND_MANIFEST" "$OUTPUT_CONFIG" "${PROJECT_ROOT}/${PROJECT_NAME}/01_data" <<'PY'
+from pathlib import Path
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from p11b_prepare_layout import link_method_initial_files
+
+link_method_initial_files(Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4], Path(sys.argv[5]))
+PY
 fi

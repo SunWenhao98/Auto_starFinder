@@ -28,6 +28,10 @@ Options:
   --script_dir PATH
   --conda_sh PATH
   -h, --help
+
+Keep --input_config in the round directory as a link to the method-root initial file.
+Diagnostics stay in that round directory; name the output with its actual round,
+e.g. TileConfiguration.registered.round001.Ashlar.txt.
 USAGE
 }
 

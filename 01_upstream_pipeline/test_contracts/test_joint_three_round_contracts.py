@@ -160,6 +160,15 @@ class JointThreeRoundContracts(unittest.TestCase):
         summary_path = self.work / "joint/three_rounds_summary.json"
         summary = json.loads(summary_path.read_text())
         self.assertEqual(set(summary["rounds"]), set(selections))
+        expected_names = {
+            "ref": "TileConfiguration.registered.round001.AshlarJoint.txt",
+            "IF": "TileConfiguration.registered.IF.AshlarJoint.txt",
+            "seqE": "TileConfiguration.registered.round011.AshlarJoint.txt",
+        }
+        self.assertEqual(
+            {name: Path(row["tile_config"]).name for name, row in summary["rounds"].items()},
+            expected_names,
+        )
         self.assertFalse(summary["rotate90"])
         solved = {
             name: read_config(Path(summary["rounds"][name]["tile_config"]))
@@ -190,6 +199,13 @@ class JointThreeRoundContracts(unittest.TestCase):
         directories, configs, actual = self.prepare_rounds(
             {name: names for name in shifts}, shifts=shifts, stack_depth=3,
         )
+        # One method-local initial source feeds all three independently read image rounds.
+        shared = self.work / "TileConfiguration.initial.txt"
+        write_config(shared, {name: NOMINAL[name] for name in names})
+        before = shared.read_text()
+        for round_name, directory in directories.items():
+            configs[round_name] = directory / shared.name
+            configs[round_name].symlink_to("../" + shared.name)
         scene = textured_scene()
         with tifffile.TiffFile(directories["ref"] / names[0]) as image:
             self.assertEqual(len(image.pages), 3)
@@ -200,6 +216,7 @@ class JointThreeRoundContracts(unittest.TestCase):
         np.testing.assert_array_equal(volume.max(axis=0), scene[y:y + TILE_SIZE, x:x + TILE_SIZE])
 
         self.require_success(self.run_cli("p31_ashlar_stitch_joint.py", self.joint_arguments(directories, configs)))
+        self.assertEqual(shared.read_text(), before)
         summary_path = self.work / "joint/three_rounds_summary.json"
         summary = json.loads(summary_path.read_text())
         solved = {

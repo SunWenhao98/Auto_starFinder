@@ -124,7 +124,7 @@ def test_new_default_config_uses_renamed_entries_and_raw_reference():
     assert not values.getboolean("nuclei_reg_apply_and_save_images")
     assert values["prepare_layout_mode"] == "symlink"
     assert values["prepare_layout_output_format"] == "preserve"
-    assert values["prepare_tile_config_source_channel_dir"] == "raw-refDAPI"
+    assert values["prepare_tile_config_source_channel_dir"] == "ref/raw-refDAPI"
     assert values["fiji_stitch_initial_source_channel"] == "raw-refDAPI"
     for name in ("11_nuclei_registration.sh", "21_prepare_layout.sh", "p21_prepare_noRef_layout.py"):
         assert not (ROOT / "02_FovIntegration" / name).exists()

@@ -16,13 +16,17 @@ Usage: 31_ashlar_stitch_joint.sh --project_root PATH --project_name NAME --reg_d
 Joint ashlar stitching of ref, IF and optional seqE, retaining each round's FOVs.
 All output TileConfigurations and the exported canvas share one coordinate frame.
 
+For the method-root layout, ref/IF/seqE initial inputs are round-local links.
+Use actual acquisition round names in every registered output; round005 references
+must override the round001 example names. Joint outputs are separate files, not initial links.
+
 Options:
   --if_input_config NAME         independent IF nominal config; empty uses --input_config
   --seqe_channel_dir DIR         enable seqE in the same solve
   --seqe_input_config NAME       independent seqE nominal config
-  --output_ref_config NAME       (default TileConfiguration.joint_ref.txt)
-  --output_if_config NAME        (default TileConfiguration.joint_IF.txt)
-  --output_seqe_config NAME      (default TileConfiguration.joint_seqE.txt)
+  --output_ref_config NAME       (default TileConfiguration.registered.round001.AshlarJoint.txt)
+  --output_if_config NAME        (default TileConfiguration.registered.IF.AshlarJoint.txt)
+  --output_seqe_config NAME      (default TileConfiguration.registered.round011.AshlarJoint.txt)
   --output_prefix PREFIX         diagnostics prefix (default joint_ref-IF)
   --max_shift_frac FLOAT         (default 0.05)
   --filter_sigma FLOAT           (default 3.0)
@@ -60,9 +64,9 @@ INPUT_CONFIG=""
 IF_INPUT_CONFIG=""
 SEQE_CHANNEL_DIR=""
 SEQE_INPUT_CONFIG=""
-OUTPUT_REF_CONFIG="TileConfiguration.joint_ref.txt"
-OUTPUT_IF_CONFIG="TileConfiguration.joint_IF.txt"
-OUTPUT_SEQE_CONFIG="TileConfiguration.joint_seqE.txt"
+OUTPUT_REF_CONFIG="TileConfiguration.registered.round001.AshlarJoint.txt"
+OUTPUT_IF_CONFIG="TileConfiguration.registered.IF.AshlarJoint.txt"
+OUTPUT_SEQE_CONFIG="TileConfiguration.registered.round011.AshlarJoint.txt"
 OUTPUT_PREFIX="joint_ref-IF"
 MAX_SHIFT_FRAC="0.05"
 FILTER_SIGMA="3.0"

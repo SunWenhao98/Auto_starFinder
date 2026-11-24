@@ -135,7 +135,8 @@ def plot_tile_positions(df, tile_size_px, non_overlap_len, output_dir, project_n
     
     plt.tight_layout()
     output_path1 = output_dir / "tile_layout_leica.png"
-    fig1.savefig(output_path1, dpi=300, bbox_inches='tight', facecolor='white')
+    with output_path1.open('xb') as handle:
+        fig1.savefig(handle, format='png', dpi=300, bbox_inches='tight', facecolor='white')
     logging.info(f"Tile layout saved to: {output_path1}")
     
     # ========== 图2: Tile中心分布散点图 ==========
@@ -172,7 +173,8 @@ def plot_tile_positions(df, tile_size_px, non_overlap_len, output_dir, project_n
     plt.tight_layout()
     
     output_path2 = output_dir / "tile_centers_distribution_leica.png"
-    fig2.savefig(output_path2, dpi=300, bbox_inches='tight', facecolor='white')
+    with output_path2.open('xb') as handle:
+        fig2.savefig(handle, format='png', dpi=300, bbox_inches='tight', facecolor='white')
     logging.info(f"Tile centers saved to: {output_path2}")
     
     plt.close(fig1)
@@ -193,7 +195,7 @@ def generate_tile_summary_csv(df, tile_size_px, output_dir):
     
     # 保存CSV
     csv_path = output_dir / "tile_summary.csv"
-    df.to_csv(csv_path, index=False)
+    df.to_csv(csv_path, index=False, mode="x")
     logging.info(f"Tile summary saved to: {csv_path}")
     
     return df
@@ -203,6 +205,8 @@ def main():
     parser.add_argument('--input_dir', type=Path, required=True)
     parser.add_argument('--maf_file', type=Path, required=True)
     parser.add_argument('--output_dir', type=Path, required=True)
+    parser.add_argument('--output_config', default='TileConfiguration.txt',
+                        help='Coordinate filename below output_dir; 12 passes TileConfiguration.initial.txt.')
     parser.add_argument('--project_name', type=str, required=True)
     parser.add_argument('--match_string', type=str, default='C1')
     parser.add_argument('--pixel_size_um', type=float, default=0.142)
@@ -270,8 +274,8 @@ def main():
         # 顺序走位
         df['pos_y_px'] = (df['phys_y'] - min_y) / args.pixel_size_um
 
-    output_config_path = args.output_dir / "TileConfiguration.txt"
-    with open(output_config_path, 'w') as f:
+    output_config_path = args.output_dir / args.output_config
+    with open(output_config_path, 'x') as f:
         f.write("# Define the number of dimensions we are working on\n")
         f.write("dim = 3\n\n")
         f.write("# Define the image coordinates\n")

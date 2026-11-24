@@ -21,7 +21,7 @@ generator 按固定顺序为每个 `JOB_*` 中启用的步骤串联 `afterok`。
 |---|---|---|
 | `11a_nuclei_registration.sh` | 同一个 FOV 的参考轮与 moving 轮 DAPI，沿用 DFT 算法估计平移 | `PositionXXX/log/log_protein_registration_<tag>.txt` |
 | `11b_prepare_layout.sh` | 按轮次和 panel 准备通道布局 | `PositionXXX.tif` 文件软链接及来源清单 |
-| `12_prepare_tile_config.sh` | 参考图列表与 Leica/Olympus metadata | `TileConfiguration.initial.txt`、`tile_summary.csv` 和 fusion-size preflight |
+| `12_prepare_tile_config.sh` | 每个样本、方法读取一次参考图列表与 Leica/Olympus metadata | 方法根的 `TileConfiguration.initial.txt`、`tile_summary.csv`、布局图和 fusion-size preflight；各轮的初始文件链接 |
 | `15_fiji_stitch_initial.sh` | 参考 DAPI 与 initial config，运行 Fiji registration/global optimization | 配置指定的 Fiji 精配坐标与参考拼图 |
 | `22_ashlar_stitch_initial.sh` | 参考 DAPI 与 initial config，运行 Ashlar `EdgeAligner` | 配置指定的 Ashlar 精配坐标与参考拼图 |
 | `23_prepare_moveImages_tileconfig.sh` | 参考精配坐标与选定的逐 FOV 位移日志 | moving 坐标表及同 stem 的 `.shifts.csv` |
@@ -58,11 +58,20 @@ seqE,round011,LeicaSeqE,seqE
 
 ```text
 <method>/
+  TileConfiguration.initial.txt
+  tile_summary.csv
+  fiji_fusion_preflight.json
+  ref/TileConfiguration.initial.txt -> ../TileConfiguration.initial.txt
+  ref/tile_summary.csv -> ../tile_summary.csv
   ref/raw-refDAPI/PositionXXX.tif
+  IF/TileConfiguration.initial.txt -> ../TileConfiguration.initial.txt
+  IF/tile_summary.csv -> ../tile_summary.csv
   IF/raw-561-CA9/PositionXXX.tif
   IF/raw-488-CD144/PositionXXX.tif
   IF/raw-647-CD31/PositionXXX.tif
   IF/raw-DAPI/PositionXXX.tif
+  seqE/TileConfiguration.initial.txt -> ../TileConfiguration.initial.txt
+  seqE/tile_summary.csv -> ../tile_summary.csv
   seqE/raw-647-GCnt/PositionXXX.tif
   seqE/raw-561-GTrb/PositionXXX.tif
   seqE/raw-DAPI/PositionXXX.tif
@@ -70,13 +79,17 @@ seqE,round011,LeicaSeqE,seqE
 
 `prepare_layout_mode = symlink` 与 `prepare_layout_output_format = preserve` 为默认组合。各方法、轮次和通道目录都是独立实体目录，目录中的 TIFF 逐文件链接到源文件。Fiji 会在输入通道目录写入坐标配置和整幅拼图，各方法因此需要独立的目录。
 
+`12` 在方法根运行一次，复用同一份 `prepare_layout_round_manifest` 建立上述初始配置和summary链接；链接在初始文件成功生成后创建，不另提交建链作业。共享前核对各轮Position覆盖与根initial实际映射一致；不一致时停止，不能静默丢弃额外或缺失FOV。各方法独立生成自己的initial，不跨方法复制或链接。下文约束后续新运行，不回写已完成结果或历史提交脚本。
+
+只有initial和名义summary共用；“只读”指下游仅将它们作为读取输入，不通过链接写入，不改变文件权限或ACL。Fiji通道目录中的 `TileConfiguration.txt` 是工作副本，registered、moving与各轮诊断是独立输出，不能链接回共享initial。`tile_summary.csv` 在各轮保留入口供后续reads整合使用；布局图和preflight只需在方法根保存一份。initial、summary和布局图采用独占写入；新运行使用新的方法工作目录。
+
 链接时解析源 TIFF 的实体路径，避免目标经过仅属主可遍历的 home 别名。来源清单记录实际源文件和布局文件。相同位置、相同源的既有链接可复用，断链、不同源链接或同名实体文件作为冲突报告。链接沿用目标已有的读取权限，计算节点和实际执行账号需要能够遍历源目录并读取 TIFF。
 
 需要位深转换时，显式使用 `prepare_layout_mode = copy` 和所需 `prepare_layout_output_format`。原始位深参考图与旧 `11` 输出的 8 位参考图在量化上可能有差异，初始精配坐标需按本次输入口径验收。
 
 ## 三轮布局的调用配置
 
-完整 INI 的单轮默认值只准备参考 DAPI。一次准备三轮时，填写上面的 CSV，并让各步骤使用同一方法根。下面是 A Fiji 的关联配置片段，合并到完整 INI 后由 generator 生成提交脚本。
+完整INI默认关闭各步骤；启用三轮布局前，填写上面的CSV，并让各步骤使用同一方法根。单轮直接调用时，须显式匹配11b的输出位置和12的source路径。下面是A Fiji的关联配置片段，合并到完整INI后由generator生成提交脚本。
 
 ```ini
 nuclei_reg_aligned_round_outdir = IF_ref001
@@ -84,17 +97,25 @@ prepare_layout_stitching_workdir = A_Fiji
 prepare_layout_round_manifest = /absolute/path/round_layout.csv
 prepare_tile_config_stitching_workdir = A_Fiji
 prepare_tile_config_source_channel_dir = ref/raw-refDAPI
-fiji_stitch_initial_stitching_workdir = A_Fiji
-fiji_stitch_initial_source_channel = ref/raw-refDAPI
+prepare_tile_config_output_config = TileConfiguration.initial.txt
+fiji_stitch_initial_stitching_workdir = A_Fiji/ref
+fiji_stitch_initial_source_channel = raw-refDAPI
+fiji_stitch_initial_input_config = TileConfiguration.initial.txt
+fiji_stitch_initial_output_config = TileConfiguration.registered.round001.Fiji.txt
 prepare_moveimages_stitching_workdir = A_Fiji
 prepare_moveimages_registration_log_name = log_protein_registration_IF_ref001.txt
-fiji_stitch_mosaic_stitching_workdir = A_Fiji
-fiji_stitch_mosaic_channel_dir_prefix = IF/raw-
+prepare_moveimages_input_config = ref/TileConfiguration.registered.round001.Fiji.txt
+prepare_moveimages_output_config = IF/TileConfiguration.moving.IF.Fiji.txt
+fiji_stitch_mosaic_stitching_workdir = A_Fiji/IF
+fiji_stitch_mosaic_input_config = TileConfiguration.moving.IF.Fiji.txt
+fiji_stitch_mosaic_channel_dir_prefix = raw-
 ```
 
-seqE 的 11a/23 调用使用自己的 moving_round、日志 tag、输出坐标表名，16/24 的通道前缀使用 `seqE/raw-`。单个 JOB 中 generator 每个步骤执行一次，两个 moving 轮分别配置 JOB 或明确调用，11b 的三轮布局清单可以共用。
+seqE 的 11a/23 调用使用自己的 moving_round和日志tag，23输出设为 `seqE/TileConfiguration.moving.round011.Fiji.txt`；16的workdir为 `A_Fiji/seqE`，读取该文件名，通道前缀仍为 `raw-`。单个JOB中generator每步骤执行一次，moving轮可分别配置JOB或明确调用；只有方法级准备JOB启用12，其余各轮任务复用链接，不再次启用12。现有编排须让各轮初始精配等待这一次12成功。
 
-Ashlar 的对应参数为 `ashlar_stitch_initial_source_channel_dir` 和 `ashlar_stitch_mosaic_channel_dir_prefix`。31/32 使用 `ref/raw-refDAPI`、`IF/raw-`、`seqE/raw-` 的同一布局。
+Ashlar使用自己的方法根和相同布局约定；参考精配输出例如 `ref/TileConfiguration.registered.round001.Ashlar.txt`，moving输出例如 `IF/TileConfiguration.moving.IF.Ashlar.txt`。B路线各轮15/22仍分别精配，只共享MAF初始坐标；C路线由31联合求解。31/32在方法根使用 `ref/raw-refDAPI`、`IF/raw-`、`seqE/raw-`。实际参考轮为round005时，所有reference坐标文件名和消费者同步改为round005，不能只写ref而省略轮次。
+
+后续reads整合应明确选择该后端的参考精配文件：Fiji模板默认跟随 `fiji_stitch_initial_output_config`，Ashlar方法需将 `cellreads_registered_tile_config` 设为 `%(ashlar_stitch_initial_output_config)s`，对应目录仍为该方法的 `ref`。联合拼接则选择方法根及其带实际参考轮名的AshlarJoint输出。
 
 ## 同轮 MIP 展示
 
@@ -116,11 +137,11 @@ Ashlar 的对应参数为 `ashlar_stitch_initial_source_channel_dir` 和 `ashlar
 
 ## TileConfiguration 与 23 的契约
 
-单轮参考布局的 source channel 为 `raw-refDAPI`，三轮清单布局为 `ref/raw-refDAPI`。`12`、`15/22` 应读取同一套参考图，并使用显式配置的坐标表名。
+单轮参考布局的source channel为 `raw-refDAPI`。三轮布局中12的workdir是方法根、source channel为 `ref/raw-refDAPI`；15/22的workdir是方法根下的 `ref`、source channel为 `raw-refDAPI`，因此两者读取同一套参考图。15/22读取各轮目录中的initial链接，22的诊断也留在各轮目录，不把多个轮次的输入路径直接改为方法根。
 
 `23` 通过 `--input_config`、`--output_config` 和 `--registration_log_name` 选择输入坐标、输出坐标和位移日志。默认 `shift_sign=1`、`rotate_shifts=false` 时，输出为 `X += colShift`、`Y += rowShift`、`Z += zShift`。每个条目按真实 `PositionXXX` 对应日志。
 
-输出坐标表的 stem 决定 shifts 表名，例如 `TileConfiguration.IF.moving.Fiji.txt` 对应 `TileConfiguration.IF.moving.Fiji.shifts.csv`。IF 和 seqE 使用不同的输出坐标表名，在同一方法根下分别保存。shifts 表的 `moving_x/moving_y/moving_z` 表示当前 moving 轮更新后的放置坐标。
+输出坐标表的stem决定shifts表名，例如 `IF/TileConfiguration.moving.IF.Fiji.txt` 对应 `IF/TileConfiguration.moving.IF.Fiji.shifts.csv`；seqE示例为 `seqE/TileConfiguration.moving.round011.Fiji.txt`。registered和moving名称同时标明实际轮次与后端。shifts表的 `moving_x/moving_y/moving_z` 表示当前moving轮更新后的放置坐标，A路线最终融合继续读取23产出的moving配置，不用共同initial替代位移后的坐标。
 
 ## Fiji fusion preflight
 

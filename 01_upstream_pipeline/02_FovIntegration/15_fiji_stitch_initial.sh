@@ -28,6 +28,10 @@ Options:
   --fiji_dir PATH
   --dry_run BOOL
   -h, --help
+
+Use a round-local input link to the method-root initial configuration.
+Name the output with its actual round, e.g. TileConfiguration.registered.round001.Fiji.txt.
+The channel-local TileConfiguration.txt is a working copy, never a link to the shared initial file.
 USAGE
 }
 

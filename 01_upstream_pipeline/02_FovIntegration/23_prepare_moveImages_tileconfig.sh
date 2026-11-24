@@ -19,6 +19,10 @@ Options:
   --script_dir PATH
   --conda_sh PATH
   -h, --help
+
+Read the reference round's registered file and write a separate moving-round file,
+e.g. IF/TileConfiguration.moving.IF.Fiji.txt or seqE/TileConfiguration.moving.round011.Fiji.txt.
+The .shifts.csv output inherits that round-labelled stem; never write into the shared initial link.
 USAGE
 }
 

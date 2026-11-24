@@ -50,20 +50,61 @@ def convert_dtype(image, output_format):
     return (np.clip(values, 0, 1) * np.iinfo(output_format).max).astype(output_format)
 
 
+def link_file(source, target):
+    source = source.resolve(strict=True)
+    if target.parent.is_symlink():
+        raise FileExistsError(f"Layout output directory is a symlink: {target.parent}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    link_target = os.path.relpath(source, target.parent.resolve(strict=True))
+    try:
+        target.symlink_to(link_target)
+    except FileExistsError:
+        if target.is_symlink() and target.resolve(strict=True) == source:
+            return
+        raise FileExistsError(f"Layout target already belongs to another input: {target}")
+
+
+def link_method_initial_files(method_root, round_manifest, config_name, raw_rounds_dir):
+    """Expose one completed method-local MAF result through each round's input path."""
+    sources = (method_root / config_name, method_root / "tile_summary.csv")
+    with sources[0].open(encoding="utf-8") as handle:
+        expected = {
+            f"Position{int(match.group(1)):03d}"
+            for line in handle
+            if (match := POSITION_RE.search(line.split(";", 1)[0]))
+        }
+    with round_manifest.open(newline="", encoding="utf-8") as handle:
+        rounds = list(csv.DictReader(handle))
+    # A shared initial must not silently omit extra/missing acquisitions in another round.
+    # Check this join once here using directory names, without reading image pixels.
+    for row in rounds:
+        observed = {
+            f"Position{int(match.group(1)):03d}"
+            for path in (raw_rounds_dir / row["rawdata_round"]).iterdir()
+            if path.is_dir() and (match := POSITION_RE.fullmatch(path.name))
+        }
+        if observed != expected:
+            raise ValueError(
+                f"Shared initial FOV coverage differs for {row['rawdata_round']}: "
+                f"missing={sorted(expected - observed)}, extra={sorted(observed - expected)}"
+            )
+    for row in rounds:
+        if not row["subdir"]:
+            continue
+        for source in sources:
+            target = method_root / row["subdir"] / source.name
+            link_file(source, target)
+            print(f"[LINK] {target} -> {os.readlink(target)}", flush=True)
+
+
 def write_output(source, target, layout_mode, output_format):
+    if layout_mode == "symlink":
+        link_file(source, target)
+        return
+
     if target.parent.is_symlink():
         raise FileExistsError(f"Channel output directory is a symlink: {target.parent}")
     target.parent.mkdir(parents=True, exist_ok=True)
-    if layout_mode == "symlink":
-        link_target = os.path.relpath(source, target.parent.resolve(strict=True))
-        try:
-            target.symlink_to(link_target)
-        except FileExistsError:
-            if target.is_symlink() and target.resolve(strict=True) == source:
-                return
-            raise FileExistsError(f"Layout target already belongs to another input: {target}")
-        return
-
     with target.open("xb") as handle:
         if output_format == "preserve":
             with source.open("rb") as source_handle:

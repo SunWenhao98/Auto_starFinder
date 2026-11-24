@@ -244,6 +244,7 @@ STEP_SPECS = {
             ("prepare_tile_config_image_xy", "--image_xy"),
             ("prepare_tile_config_overlap_ratio", "--overlap_ratio"),
             ("prepare_tile_config_output_config", "--output_config"),
+            ("prepare_layout_round_manifest", "--round_manifest"),
             ("prepare_tile_config_invert_y", "--invert_y"),
             ("prepare_tile_config_maf_file", "--maf_file"),
             ("prepare_tile_config_microscope", "--microscope"),

@@ -363,7 +363,8 @@ def plot_tile_positions(df, tile_size_px, non_overlap_len, output_dir, show_labe
     
     # 保存图1
     output_path1 = output_dir / "tile_layout.png"
-    fig1.savefig(output_path1, dpi=300, bbox_inches='tight', facecolor='white')
+    with output_path1.open('xb') as handle:
+        fig1.savefig(handle, format='png', dpi=300, bbox_inches='tight', facecolor='white')
     logging.info(f"Tile layout saved to: {output_path1}")
     
     # ========== 图2: Tile中心分布散点图 ==========
@@ -498,15 +499,18 @@ def plot_tile_positions(df, tile_size_px, non_overlap_len, output_dir, show_labe
     
     # 保存图2
     output_path2 = output_dir / "tile_centers_distribution.png"
-    fig2.savefig(output_path2, dpi=300, bbox_inches='tight', facecolor='white')
+    with output_path2.open('xb') as handle:
+        fig2.savefig(handle, format='png', dpi=300, bbox_inches='tight', facecolor='white')
     logging.info(f"Tile centers distribution saved to: {output_path2}")
     
     # 保存高分辨率版本
     output_path1_high = output_dir / "tile_layout_highres.png"
     output_path2_high = output_dir / "tile_centers_distribution_highres.png"
     
-    fig1.savefig(output_path1_high, dpi=600, bbox_inches='tight', facecolor='white')
-    fig2.savefig(output_path2_high, dpi=600, bbox_inches='tight', facecolor='white')
+    with output_path1_high.open('xb') as handle:
+        fig1.savefig(handle, format='png', dpi=600, bbox_inches='tight', facecolor='white')
+    with output_path2_high.open('xb') as handle:
+        fig2.savefig(handle, format='png', dpi=600, bbox_inches='tight', facecolor='white')
     
     # 显示图形
     plt.show()
@@ -532,7 +536,7 @@ def generate_tile_summary_csv(df, tile_size_px, output_dir):
     
     # 保存CSV
     csv_path = output_dir / "tile_summary.csv"
-    df.to_csv(csv_path, index=False)
+    df.to_csv(csv_path, index=False, mode="x")
     logging.info(f"Tile summary saved to: {csv_path}")
     
     return df
@@ -545,6 +549,8 @@ def main():
     parser.add_argument('--output_dir','-o', type=Path, required=False, 
                         default=Path("/media/zenglab/result/swh/07_Olympus_TEST/01_OlympusTest/01_data/round002"),
                         help='The path to the output directory.')
+    parser.add_argument('--output_config', default='TileConfiguration.txt',
+                        help='Coordinate filename below output_dir; 12 passes TileConfiguration.initial.txt.')
     parser.add_argument('--match_string', '-m', type=str, required=False, 
                         default="C1", 
                         help='The string to match the input file.')
@@ -617,8 +623,8 @@ def main():
             df['pos_y_px'] = (df['phys_y'] - min_y) / PIXEL_SIZE_UM
 
         # 生成TileConfiguration.txt
-        output_config_path = output_dir / "TileConfiguration.txt"
-        with open(output_config_path, 'w') as f:
+        output_config_path = output_dir / args.output_config
+        with open(output_config_path, 'x') as f:
             f.write("# Define the number of dimensions we are working on\n")
             f.write("dim = 3\n\n")
             f.write("# Define the image coordinates\n")
@@ -681,6 +687,7 @@ def main():
 
     except Exception as e:
         logging.error(f"Global error occurred: {e}", exc_info=True)
+        raise
     finally:
         jb.kill_vm()
         logging.info("Java VM stopped")
