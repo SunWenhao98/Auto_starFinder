@@ -65,6 +65,26 @@ def build_parser():
         default="IF",
         help="Round whose coordinates and tile transform are being rendered.",
     )
+    parser.add_argument(
+        "--flat_field",
+        default="none",
+        help="none, auto (estimate from this sample), or a sensor-YX profile TIFF.",
+    )
+    parser.add_argument(
+        "--blend_rounding",
+        action="store_true",
+        help="Round Ashlar's blended values before writing an integer mosaic.",
+    )
+    parser.add_argument(
+        "--canvas_mode",
+        choices=["joint", "ref"],
+        default="joint",
+        help="Render on the joint canvas or the reference round's bounding canvas.",
+    )
+    parser.add_argument(
+        "--ref_canvas_config",
+        help="Override the reference TileConfiguration path from the joint summary.",
+    )
     return parser
 
 
@@ -73,7 +93,7 @@ if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
 
 import numpy as np
 import tifffile
-from ashlar import reg
+from ashlar import reg, utils
 from ashlar.reg import Mosaic, PyramidWriter
 
 
@@ -139,6 +159,13 @@ def output_dtype(input_dtype, output_format):
     return np.dtype(output_format)
 
 
+def blend_rounded(target, image):
+    blended = utils.pastefunc_blend(target, image)
+    if np.issubdtype(target.dtype, np.integer):
+        return np.rint(blended)
+    return blended
+
+
 def _replace_channel_path(fname, channel_from, channel_to):
     if not channel_from or not channel_to:
         return fname
@@ -182,6 +209,7 @@ class TiffDirectReader(reg.PlateReader):
         slice_index=None,
         output_format="preserve",
         tile_transform=None,
+        flat_field=None,
     ):
         self.path = directory
         self.mode = mode
@@ -190,6 +218,7 @@ class TiffDirectReader(reg.PlateReader):
         self.slice_index = slice_index
         self.output_format = output_format
         self.tile_transform = tile_transform
+        self.flat_field = flat_field
         self.coords_data = self._parse_config(config_file, channel_from, channel_to)
 
         if not self.coords_data:
@@ -207,6 +236,11 @@ class TiffDirectReader(reg.PlateReader):
 
             self.raw_ndim = img.ndim
             self.pixel_dtype = output_dtype(img.dtype, self.output_format)
+            if self.flat_field is not None and self.flat_field.shape != img.shape[-2:]:
+                raise ValueError(
+                    f"Flat-field profile shape {self.flat_field.shape} does not match "
+                    f"sensor YX {img.shape[-2:]} in {first_file}"
+                )
 
             if self.raw_ndim == 3:
                 self.z_depth = img.shape[0]
@@ -236,7 +270,8 @@ class TiffDirectReader(reg.PlateReader):
             print(f"Error reading first image {first_file}: {e}")
             sys.exit(1)
 
-    def _parse_config(self, config_file, channel_from, channel_to):
+    @staticmethod
+    def _parse_config(config_file, channel_from, channel_to):
         data = []
         with open(config_file, "r") as f:
             for line in f:
@@ -281,6 +316,18 @@ class TiffDirectReader(reg.PlateReader):
         return img_2d
 
     def _finalize_image(self, image):
+        if self.flat_field is not None:
+            if image.shape != self.flat_field.shape:
+                raise ValueError(
+                    f"Flat-field profile shape {self.flat_field.shape} does not match "
+                    f"sensor YX {image.shape}"
+                )
+            corrected = np.divide(image, self.flat_field, dtype=np.float64)
+            if np.issubdtype(image.dtype, np.integer):
+                limits = np.iinfo(image.dtype)
+                np.rint(corrected, out=corrected)
+                np.clip(corrected, limits.min, limits.max, out=corrected)
+            image = corrected.astype(image.dtype)
         image = self._apply_rotate90(image)
         if self.tile_transform is not None:
             image = self.tile_transform(image)
@@ -336,7 +383,8 @@ class DirectAligner:
 
 
 def main():
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
     do_make_3d = args.make_3d.lower() == "true"
     slice_indices = parse_slice_indices(args.slice_indices)
     rotate90 = args.rotate90
@@ -344,6 +392,8 @@ def main():
     canvas_origin = None
     canvas_shape = None
     summary_mode = "no summary; per-config canvas"
+    ref_canvas_config = None
+    summary = {}
     if args.tile_transform_json:
         with open(args.tile_transform_json) as f:
             summary = json.load(f)
@@ -359,6 +409,18 @@ def main():
             if args.round_name == "IF":
                 transform_spec = summary.get("if_tile_transform")
             summary_mode = "legacy two-round summary; per-config canvas"
+    if args.canvas_mode == "ref":
+        if "rounds" not in summary:
+            parser.error("--canvas_mode ref requires a joint summary with per-round metadata")
+        ref_round = summary["rounds"]["ref"]
+        ref_canvas_config = args.ref_canvas_config or ref_round["tile_config"]
+        ref_tiles = TiffDirectReader._parse_config(ref_canvas_config, None, None)
+        ref_positions = np.asarray([[tile["y"], tile["x"]] for tile in ref_tiles])
+        ref_origin = ref_positions.min(axis=0)
+        ref_upper = ref_positions.max(axis=0) + np.asarray(ref_round["tile_size_yx"])
+        canvas_origin = ref_origin.tolist()
+        canvas_shape = np.ceil(ref_upper - ref_origin).astype(int).tolist()
+        summary_mode = "joint summary; reference canvas"
     tile_transform = build_tile_transform(transform_spec)
 
     path_2d = f"{args.output_image_prefix}_2d.ome.tif"
@@ -370,10 +432,38 @@ def main():
     output_paths = [path_2d] + [path for _, path in slice_paths]
     if do_make_3d:
         output_paths.append(path_3d)
+    use_flat_field = args.flat_field.lower() != "none"
+    applied_profile_path = f"{args.output_image_prefix}_flatfield.tif"
+    canvas_path = f"{args.output_image_prefix}_canvas.json"
+    if use_flat_field:
+        output_paths.append(applied_profile_path)
+    if ref_canvas_config is not None:
+        output_paths.append(canvas_path)
     existing_outputs = [path for path in output_paths if os.path.lexists(path)]
     if existing_outputs:
         raise FileExistsError(f"Outputs already exist: {', '.join(existing_outputs)}")
-    os.makedirs(os.path.dirname(args.output_image_prefix), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_image_prefix)), exist_ok=True)
+
+    flat_field = None
+    if use_flat_field:
+        # Estimation dependencies are only needed when correction is enabled.
+        from p33_estimate_flat_field import estimate_flat_field, load_flat_field
+
+        if args.flat_field.lower() == "auto":
+            tiles = TiffDirectReader._parse_config(
+                args.config_file, args.channel_from, args.channel_to
+            )
+            source_files = [os.path.join(args.input_dir, tile["filename"]) for tile in tiles]
+            flat_field = estimate_flat_field(source_files)
+            print(f"Flat field: auto from {len(source_files)} selected FOVs")
+        else:
+            flat_field = load_flat_field(args.flat_field)
+            print(f"Flat field: {os.path.abspath(args.flat_field)}")
+        print(
+            f"Flat-field sensor YX: {flat_field.shape}, "
+            f"correction gain min/max: {1 / flat_field.max():.4g}/{1 / flat_field.min():.4g}"
+        )
+    blend_options = {"pastefunc": blend_rounded} if args.blend_rounding else {}
 
     channel_info = ""
     if args.channel_from and args.channel_to:
@@ -385,9 +475,10 @@ def main():
     print(f"Round: {args.round_name}")
     print(f"Summary mode: {summary_mode}")
     print(f"Rotate90: {rotate90}")
+    print(f"Blend rounding: {args.blend_rounding}")
     if canvas_origin is not None:
-        print(f"Shared canvas origin (Y, X): {canvas_origin}")
-        print(f"Shared canvas shape (Y, X): {canvas_shape}")
+        print(f"Canvas origin (Y, X): {canvas_origin}")
+        print(f"Canvas shape (Y, X): {canvas_shape}")
     print(
         f"Tile transform: {'applied from ' + args.tile_transform_json if tile_transform else 'none'}"
     )
@@ -403,10 +494,13 @@ def main():
         pixel_size_um=args.pixel_size_um,
         output_format=args.output_format,
         tile_transform=tile_transform,
+        flat_field=flat_field,
     )
     aligner_2d = DirectAligner(reader_2d, canvas_origin, canvas_shape)
 
-    mosaic_2d = Mosaic(aligner=aligner_2d, shape=aligner_2d.mosaic_shape, verbose=True)
+    mosaic_2d = Mosaic(
+        aligner=aligner_2d, shape=aligner_2d.mosaic_shape, verbose=True, **blend_options
+    )
     writer_2d = PyramidWriter(
         mosaics=[mosaic_2d], path=path_2d, scale=2, tile_size=1024, verbose=True
     )
@@ -426,11 +520,12 @@ def main():
             slice_index=slice_index,
             output_format=args.output_format,
             tile_transform=tile_transform,
+            flat_field=flat_field,
         )
         aligner_slice = DirectAligner(reader_slice, canvas_origin, canvas_shape)
 
         mosaic_slice = Mosaic(
-            aligner=aligner_slice, shape=aligner_slice.mosaic_shape, verbose=True
+            aligner=aligner_slice, shape=aligner_slice.mosaic_shape, verbose=True, **blend_options
         )
         writer_slice = PyramidWriter(
             mosaics=[mosaic_slice],
@@ -454,17 +549,39 @@ def main():
             pixel_size_um=args.pixel_size_um,
             output_format=args.output_format,
             tile_transform=tile_transform,
+            flat_field=flat_field,
         )
         aligner_3d = DirectAligner(reader_3d, canvas_origin, canvas_shape)
 
         mosaic_3d = Mosaic(
-            aligner=aligner_3d, shape=aligner_3d.mosaic_shape, verbose=True
+            aligner=aligner_3d, shape=aligner_3d.mosaic_shape, verbose=True, **blend_options
         )
         writer_3d = PyramidWriter(
             mosaics=[mosaic_3d], path=path_3d, scale=2, tile_size=1024, verbose=True
         )
         writer_3d.run()
         print(f"3D Image saved: {path_3d}")
+
+    if flat_field is not None:
+        with open(applied_profile_path, "xb") as handle:
+            tifffile.imwrite(handle, flat_field, photometric="minisblack", metadata={"axes": "YX"})
+        print(f"Applied flat field saved: {applied_profile_path}")
+    if ref_canvas_config is not None:
+        with open(canvas_path, "x") as handle:
+            json.dump(
+                {
+                    "canvas_mode": "ref",
+                    "canvas_origin_yx": canvas_origin,
+                    "canvas_shape_yx": canvas_shape,
+                    "rotate90": rotate90,
+                    "round_name": args.round_name,
+                    "ref_tile_config": os.path.abspath(ref_canvas_config),
+                    "joint_summary": os.path.abspath(args.tile_transform_json),
+                },
+                handle,
+                indent=2,
+            )
+        print(f"Reference canvas saved: {canvas_path}")
 
     print("\nDirect stitch complete.")
 

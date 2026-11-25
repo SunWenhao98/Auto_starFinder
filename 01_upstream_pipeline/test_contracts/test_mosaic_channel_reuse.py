@@ -194,9 +194,13 @@ class ApplyMosaicChannelReuse(unittest.TestCase):
             "channels": {"IF_CA9": {"color": [230, 159, 0], "limits": [0, 63000]}},
             "planes": {"mip": {"overlays": {"review": ["ref_DAPI", "IF_CA9"]}}},
         }))
+        # Exercise the legacy generated-job entry alongside the newly numbered wrapper.
+        display_wrapper = (
+            "35_prepare_mosaic_display.sh" if external_configs else "33_prepare_mosaic_display.sh"
+        )
         display = subprocess.run(
             [
-                "bash", RUNNER_DIR / "33_prepare_mosaic_display.sh", *common,
+                "bash", RUNNER_DIR / display_wrapper, *common,
                 "--stitching_workdir", output_dir.name,
                 "--input_manifest", str(display_manifest) if external_configs else display_manifest.name,
                 "--display_profile", str(display_profile) if external_configs else display_profile.name,

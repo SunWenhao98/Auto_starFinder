@@ -12,8 +12,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("external_configs", [False, True], ids=["relative", "absolute"])
-def test_generated_display_depends_on_requested_route_b_application(tmp_path, external_configs):
+@pytest.mark.parametrize(
+    ("external_configs", "legacy_wrapper"),
+    [(False, False), (True, False), (False, True)],
+    ids=["relative", "absolute", "legacy"],
+)
+def test_generated_display_depends_on_requested_route_b_application(
+    tmp_path, external_configs, legacy_wrapper
+):
     config_dir = tmp_path / "formal configs"
     channel_manifest = str(config_dir / "extra planes.json") if external_configs else "IF/extra planes.json"
     input_manifest = str(config_dir / "aligned planes.json") if external_configs else "aligned planes.json"
@@ -29,6 +35,8 @@ def test_generated_display_depends_on_requested_route_b_application(tmp_path, ex
     defaults["samples"] = '{"sample": 1}'
     defaults["fovIntegration"] = str(ROOT / "02_FovIntegration")
     defaults["stitch_log"] = str(tmp_path / "stitch logs")
+    if legacy_wrapper:
+        defaults["script_mosaic_display"] = "%(fovIntegration)s/33_prepare_mosaic_display.sh"
     config["JOB_REVIEW"] = {
         "project_name": "sample",
         "job_suffix": "review",
@@ -58,7 +66,9 @@ def test_generated_display_depends_on_requested_route_b_application(tmp_path, ex
     )
     subprocess.run(["bash", "-n", str(generated)], check=True)
     script = generated.read_text()
-    assert script.index("29_apply_mosaic_transform.sh") < script.index("33_prepare_mosaic_display.sh")
+    step = "33" if legacy_wrapper else "35"
+    assert script.index("29_apply_mosaic_transform.sh") < script.index(f"{step}_prepare_mosaic_display.sh")
+    assert f"logs0{step}_mosaic_display" in script
     apply = script.split("TRANSFORM_APPLY_OUTPUT=$(submit_when_ready ", 1)[1]
     display = script.split("MOSAIC_DISPLAY_OUTPUT=$(submit_when_ready ", 1)[1]
     apply_argv = shlex.split(apply.split(")\n", 1)[0].replace("\\\n", ""))

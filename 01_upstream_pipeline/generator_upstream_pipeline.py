@@ -503,11 +503,14 @@ STEP_SPECS = {
         optional_args=(
             ("ashlar_joint_mosaic_seqe_channel_dir_prefix", "--seqe_channel_dir_prefix"),
             ("ashlar_joint_mosaic_seqe_input_config", "--seqe_input_config"),
+            ("ashlar_joint_mosaic_flat_field_manifest", "--flat_field_manifest"),
+            ("ashlar_joint_mosaic_blend_rounding", "--blend_rounding"),
+            ("ashlar_joint_mosaic_canvas_mode", "--canvas_mode"),
         ),
     ),
     "mosaic_display": StepSpec(
         "run_mosaic_display", "script_mosaic_display",
-        "mosaic_display", "single", "mosaic_display", "logs033_mosaic_display",
+        "mosaic_display", "single", "mosaic_display", "logs035_mosaic_display",
         CONDA_SH_ARG + COMMON_ARGS + (
             ("mosaic_display_stitching_workdir", "--stitching_workdir"),
             ("mosaic_display_input_manifest", "--input_manifest"),
@@ -1068,13 +1071,16 @@ def render_submission_script(config: LoadedConfig) -> str:
             f"SUBMISSION_CONTEXT={_quote(submission_context)}",
         ))
         dependency: str | None = None
-        for _, spec in enabled:
+        for name, spec in enabled:
             log_work_dir = _step_log_work_dir(section, spec)
+            log_dir = spec.log_dir
+            if name == "mosaic_display" and Path(section[spec.wrapper_key]).name == "33_prepare_mosaic_display.sh":
+                log_dir = "logs033_mosaic_display"
             lines.extend(
                 (
                     "",
                     f"# Submit {spec.job_name}",
-                    f"mkdir -p {_quote(str(log_work_dir / spec.log_dir))}",
+                    f"mkdir -p {_quote(str(log_work_dir / log_dir))}",
                     f"cd {_quote(str(log_work_dir))} || exit 1",
                 )
             )

@@ -41,7 +41,8 @@ GBM006–009 的 A 路线 IF 为 N/A：同号FOV已无法对应配准；这些�
 | `23_prepare_moveImages_tileconfig.sh` | 参考精配坐标与选定的逐 FOV 位移日志 | moving 坐标表及同 stem 的 `.shifts.csv` |
 | `16_fiji_stitch_mosaic.sh`、`24_ashlar_stitch_mosaic.sh` | 读取 `11b` 的通道布局，按指定坐标融合 | 各通道拼图 |
 | `31_ashlar_stitch_joint.sh`、`32_ashlar_stitch_mosaic_joint.sh` | 联合求解三轮坐标并按共画布导出 | ref、IF、seqE 的坐标和拼图 |
-| `33_prepare_mosaic_display.sh` | 每轮读取已经同网格的二维 MIP 通道 | 多通道 OME-TIFF、叠加 PNG 和展示预设 |
+| `33_estimate_flat_field.sh` | 按轮次和通道读取显式原始 FOV 清单 | 二维平场 profile 及供 32 消费的清单 |
+| `35_prepare_mosaic_display.sh` | 每轮读取已经同网格的二维 MIP 通道 | 多通道 OME-TIFF、叠加 PNG 和展示预设 |
 
 新提交脚本使用 `11a/11b` 入口。旧脚本执行前应按当前完整 INI 重新生成。
 
@@ -139,9 +140,9 @@ Ashlar使用自己的方法根和相同布局约定；参考精配输出例如 `
 
 ## 同轮 MIP 展示
 
-本批 IF 四通道、seqE 三通道分别调用 33，使用各自的输入清单、profile 和新输出目录，例如 `display_review/IF`、`display_review/seqE`。每次输出二维多通道 `mip.ome.tif`、RGB 叠加 PNG 与 `display_presets.json`；OME 的 C 轴是通道，不是完整 Z 堆栈。generator 每个 JOB 调用 33 一次，两轮使用两个 JOB。
+本批 IF 四通道、seqE 三通道分别调用 35，使用各自的输入清单、profile 和新输出目录，例如 `display_review/IF`、`display_review/seqE`。每次输出二维多通道 `mip.ome.tif`、RGB 叠加 PNG 与 `display_presets.json`；OME 的 C 轴是通道，不是完整 Z 堆栈。generator 每个 JOB 调用 35 一次，两轮使用两个 JOB。
 
-33的 `mosaic_display_input_manifest`、`mosaic_display_profile` 接受绝对路径，也保留相对方法工作目录的路径。批次清单和profile保存在工作目录，图像仍留在各方法的数据目录；外置清单内的图像路径宜显式写绝对路径，若写相对路径则以清单自身父目录为基准。29的通道清单同样接受绝对路径，原有相对registration根的路径仍有效；清单内相对通道路径也以通道清单JSON自身的父目录为基准。
+35 的 `mosaic_display_input_manifest`、`mosaic_display_profile` 接受绝对路径，也保留相对方法工作目录的路径。批次清单和profile保存在工作目录，图像仍留在各方法的数据目录；外置清单内的图像路径宜显式写绝对路径，若写相对路径则以清单自身父目录为基准。29的通道清单同样接受绝对路径，原有相对registration根的路径仍有效；清单内相对通道路径也以通道清单JSON自身的父目录为基准。
 
 同轮通道必须使用同一套拼接坐标、像素网格和方向。A 路线保留各轮自然画布，不增加强制跨轮统一；B/C 已有画布行为保留。Z 位移日志沿用，不新增指定层补偿。本批配置 `make_3d=false`、`slice_indices=`，以 MIP 为展示交付。一般工具的指定二维层接口保留，但不是本批必需产物。
 
@@ -224,7 +225,7 @@ fiji_stitch_mosaic_*      # 16
 ashlar_stitch_mosaic_*    # 24
 ashlar_joint_stitch_*     # 31
 ashlar_joint_mosaic_*     # 32
-mosaic_display_*          # 33
+mosaic_display_*          # 35
 ```
 
 wrapper 通过显式 `--script_dir` 或 `--core_matlab_dir` 定位 runner，运行前打印实际输入、输出和环境。配置及提交日志存放在项目工作区，业务图像与坐标存放在样本 registration root。

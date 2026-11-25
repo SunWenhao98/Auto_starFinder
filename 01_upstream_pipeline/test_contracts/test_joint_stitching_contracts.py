@@ -58,13 +58,17 @@ def wrapper_runtime(tmp_path: Path) -> tuple[Path, list[str], dict[str, str]]:
         import sys
         from pathlib import Path
 
+        if sys.argv[1] == "-":
+            sys.argv = sys.argv[1:]
+            exec(compile(sys.stdin.read(), "<stdin>", "exec"))
+            sys.exit()
         runner = Path(sys.argv[2]).name
         argv = sys.argv[3:]
         options = {}
         index = 0
         while index < len(argv):
             flag = argv[index]
-            if flag in ("--rotate90", "--rotate_positions"):
+            if flag in ("--rotate90", "--rotate_positions", "--blend_rounding"):
                 options[flag] = True
                 index += 1
             else:
@@ -420,6 +424,31 @@ def test_three_round_wrappers_keep_independent_inputs_and_eight_outputs(wrapper_
     assert all(Path(p + "_2d.ome.tif").is_file() for p in prefixes)
     assert all(c["options"]["--tile_transform_json"] == str(work_dir / "joint_ref-IF_summary.json") for c in calls)
     assert all(c["options"]["--config_file"] == str(work_dir / "TileConfiguration.registered.round011.AshlarJoint.txt") for c in calls[5:])
+
+
+def test_joint_mosaic_uses_round_specific_flat_field_and_shared_options(wrapper_runtime):
+    work_dir, common, environment = wrapper_runtime
+    manifest = work_dir / "profile list.csv"
+    manifest.write_text(
+        "round,channel,profile_tif\nIF,DAPI,IF field.tif\nseqE,DAPI,seqE field.tif\n",
+        encoding="utf-8",
+    )
+    result = run_wrapper(
+        "32_ashlar_stitch_mosaic_joint.sh", common,
+        ["--channel_mode", "LeicaIF", "--input_config", "joint_IF.txt",
+         "--ref_channel_dir", "ref/raw-refDAPI", "--ref_input_config", "joint_ref.txt",
+         "--seqe_channel_dir_prefix", "seqE/raw-", "--flat_field_manifest", manifest.name,
+         "--blend_rounding", "true", "--canvas_mode", "ref",
+         "--tile_transform_json", "joint_ref-IF_summary.json"],
+        environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [call["options"] for call in read_calls(Path(environment["CAPTURE"]))]
+    corrected = {call["--round_name"]: call["--flat_field"] for call in calls if "--flat_field" in call}
+    assert len(calls) == 8
+    assert corrected == {"IF": str(work_dir / "IF field.tif"), "seqE": str(work_dir / "seqE field.tif")}
+    assert all(call["--blend_rounding"] and call["--canvas_mode"] == "ref" for call in calls)
+    assert {call["--ref_canvas_config"] for call in calls} == {str(work_dir / "joint_ref.txt")}
 
 
 @pytest.mark.parametrize(

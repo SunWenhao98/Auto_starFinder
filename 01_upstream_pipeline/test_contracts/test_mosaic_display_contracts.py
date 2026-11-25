@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import runpy
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -18,8 +19,14 @@ import tifffile
 RUNNER = (
     Path(__file__).resolve().parents[1]
     / "02_FovIntegration"
-    / "p33_prepare_mosaic_display.py"
+    / "p35_prepare_mosaic_display.py"
 )
+
+
+def test_archived_python_entry_supports_runpy():
+    archived_runner = RUNNER.with_name("p33_prepare_mosaic_display.py")
+    prepare_display = runpy.run_path(str(archived_runner))["prepare_display"]
+    assert callable(prepare_display)
 
 
 class MosaicDisplayContracts(unittest.TestCase):

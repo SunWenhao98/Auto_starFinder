@@ -77,9 +77,27 @@ canvas_shape_yx = ceil(max(all_tile_positions + tile_size) - canvas_origin_yx)
 
 32 输出参考 DAPI 一通道、IF 四通道、seqE 三通道，共八通道。前缀分别为 `<prefix>_refDAPI`、`<prefix>_<IF channel>`、`<prefix>_seqE_<seqE channel>`；IF DAPI 与 seqE DAPI 不会撞名。seqE 的拼接通道固定为 647-GCnt、561-GTrb、DAPI；原始 ch02=Padlayer 与 11a 四项 panel 保留，拼接不处理占位通道。
 
-本批正式图像使用 `*_2d.ome.tif` MIP 金字塔图，`make_3d=false`、`slice_indices=`。33 分别打包 IF 四通道和 seqE 三通道 MIP，输出二维多通道 OME-TIFF 和叠加 PNG。已有 C 路线三轮共画布能力保留，但展示只要求各轮内部通道匹配；不增加完整 3D 叠加或 Z 位移补偿验收。
+本批正式图像使用 `*_2d.ome.tif` MIP 金字塔图，`make_3d=false`、`slice_indices=`。35 分别打包 IF 四通道和 seqE 三通道 MIP，输出二维多通道 OME-TIFF 和叠加 PNG。已有 C 路线三轮共画布能力保留，但展示只要求各轮内部通道匹配；不增加完整 3D 叠加或 Z 位移补偿验收。
 
 写入前检查本次目标路径，已有结果直接失败；不提供覆盖开关。输入与输出可同属 workdir，重复计算应换新的工作目录或完整输出名，不能删除旧文件后冒充续跑。
+
+## 33 平场估计与 32 出图选项
+
+`33_estimate_flat_field.sh` 独立运行。输入 CSV 每行对应一个已选 FOV 的单通道原始 TIFF，包含 `round,channel,source_tiff`。`round` 使用 `ref`、`IF` 或 `seqE`，例如 `IF,647-CD31,/path/to/tile.tif`。仅把同一采集设置下可共用校正的影像列在同一份清单中，实际参考轮（如 round001 和 round005）使用各自的校准集。
+
+33 逐 FOV 做 MIP，按轮次和通道合并均值，经高斯平滑后写出均值为 1 的二维 profile 和 `profiles.csv`。`--output_dir` 指向新的项目目录。32 使用下面的可选设置；没有分配 profile 的通道沿用原始灰度。相对 `profile_tif` 路径以清单目录为基准。
+
+```ini
+ashlar_joint_mosaic_flat_field_manifest = /absolute/path/profiles.csv
+ashlar_joint_mosaic_blend_rounding = false
+ashlar_joint_mosaic_canvas_mode = joint
+```
+
+平场在传感器 XY 方向应用，随后才旋转和重放轮次变换。每个校正通道的输出前缀旁保存实际使用的 `_flatfield.tif`。`p32` 的 `--flat_field auto` 从当前 config 实际消费的 FOV 估计，供同样本诊断。融合取整可单独打开，用于整数重叠区域的舍入对照。
+
+`canvas_mode=ref` 只从已求解的参考轮位置计算画布，依然重放各轮既有 tile 变换。每个 `_canvas.json` 写出实际原点和尺寸，用于核对叠加位置。此模式会裁掉 ref 画布外的 moving 覆盖，试绘使用独立的 `stitch_result_dirname`。
+
+新的展示入口为 `35_prepare_mosaic_display.sh`，日志写在 `logs035_mosaic_display`。旧配置引用的 `33_prepare_mosaic_display.sh` 仍可转发至 35，保留历史日志目录。
 
 ## 三轮配置示例
 

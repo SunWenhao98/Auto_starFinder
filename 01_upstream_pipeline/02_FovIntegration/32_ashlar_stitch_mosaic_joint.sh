@@ -23,6 +23,9 @@ Options:
   --pixel_size_um FLOAT
   --slice_indices LIST
   --tile_transform_json NAME   joint summary: per-round transforms and shared canvas
+  --flat_field_manifest PATH  CSV with round,channel,profile_tif
+  --blend_rounding BOOL       round integer overlap values before assignment
+  --canvas_mode joint|ref     shared canvas (default) or reference-round bounds
   --ref_channel_dir NAME       also stitch this reference-round channel dir ...
   --ref_input_config NAME      ... with this config; both empty = skip
   --seqe_channel_dir_prefix PREFIX  also export the three real seqE channels; empty = skip
@@ -64,6 +67,9 @@ MAKE_3D="false"
 PIXEL_SIZE_UM="0.142"
 SLICE_INDICES=""
 TILE_TRANSFORM_JSON=""
+FLAT_FIELD_MANIFEST=""
+BLEND_ROUNDING="false"
+CANVAS_MODE="joint"
 REF_CHANNEL_DIR=""
 REF_INPUT_CONFIG=""
 SEQE_CHANNEL_DIR_PREFIX=""
@@ -88,6 +94,9 @@ while [[ $# -gt 0 ]]; do
         --pixel_size_um) PIXEL_SIZE_UM="$2"; shift 2 ;;
         --slice_indices) SLICE_INDICES="$2"; shift 2 ;;
         --tile_transform_json) TILE_TRANSFORM_JSON="$2"; shift 2 ;;
+        --flat_field_manifest) FLAT_FIELD_MANIFEST="$2"; shift 2 ;;
+        --blend_rounding) BLEND_ROUNDING="$2"; shift 2 ;;
+        --canvas_mode) CANVAS_MODE="$2"; shift 2 ;;
         --ref_channel_dir) REF_CHANNEL_DIR="$2"; shift 2 ;;
         --ref_input_config) REF_INPUT_CONFIG="$2"; shift 2 ;;
         --seqe_channel_dir_prefix) SEQE_CHANNEL_DIR_PREFIX="$2"; shift 2 ;;
@@ -120,13 +129,20 @@ finish() {
 }
 trap finish EXIT
 
+PRIMARY_PROFILE_ROUND="IF"
 case "$CHANNEL_MODE" in
     LeicaIF) CHANNEL_NAMES="561-CA9,488-CD144,647-CD31,DAPI" ;;
     OlympusIF) CHANNEL_NAMES="488-CD144,561-CA9,647-CD31,DAPI" ;;
-    LeicaSeqE) CHANNEL_NAMES="647-GCnt,561-GTrb,DAPI" ;;
+    LeicaSeqE)
+        CHANNEL_NAMES="647-GCnt,561-GTrb,DAPI"
+        PRIMARY_PROFILE_ROUND="seqE"
+        ;;
     LeicaIFIndependent) CHANNEL_NAMES="561-CA9,488-CD144,647-CD31" ;;
     OlympusIFIndependent) CHANNEL_NAMES="488-CD144,561-CA9,647-CD31" ;;
-    LeicaSeqEIndependent) CHANNEL_NAMES="647-GCnt,561-GTrb" ;;
+    LeicaSeqEIndependent)
+        CHANNEL_NAMES="647-GCnt,561-GTrb"
+        PRIMARY_PROFILE_ROUND="seqE"
+        ;;
     *) echo "Error: unsupported --channel_mode: $CHANNEL_MODE" >&2; exit 1 ;;
 esac
 REGISTRATION_FOLDER="02_registration${REG_DIR_SUFFIX}"
@@ -134,6 +150,9 @@ REG_ROOT="${PROJECT_ROOT}/${PROJECT_NAME}/${REGISTRATION_FOLDER}"
 WORK_DIR="${REG_ROOT}/${STITCHING_WORKDIR}"
 INPUT_CONFIG_FILE="${WORK_DIR}/${INPUT_CONFIG}"
 STITCH_RESULT_DIR="${WORK_DIR}/${STITCH_RESULT_DIRNAME}"
+if [[ -n "$FLAT_FIELD_MANIFEST" && "$FLAT_FIELD_MANIFEST" != /* ]]; then
+    FLAT_FIELD_MANIFEST="${WORK_DIR}/${FLAT_FIELD_MANIFEST}"
+fi
 print_slurm_info
 echo "[PARAM] PROJECT_ROOT=${PROJECT_ROOT}"
 echo "[PARAM] PROJECT_NAME=${PROJECT_NAME}"
@@ -150,6 +169,9 @@ echo "[PARAM] MAKE_3D=${MAKE_3D}"
 echo "[PARAM] PIXEL_SIZE_UM=${PIXEL_SIZE_UM}"
 echo "[PARAM] SLICE_INDICES=${SLICE_INDICES}"
 echo "[PARAM] TILE_TRANSFORM_JSON=${TILE_TRANSFORM_JSON}"
+echo "[PARAM] FLAT_FIELD_MANIFEST=${FLAT_FIELD_MANIFEST}"
+echo "[PARAM] BLEND_ROUNDING=${BLEND_ROUNDING}"
+echo "[PARAM] CANVAS_MODE=${CANVAS_MODE}"
 echo "[PARAM] REF_CHANNEL_DIR=${REF_CHANNEL_DIR}"
 echo "[PARAM] REF_INPUT_CONFIG=${REF_INPUT_CONFIG}"
 echo "[PARAM] SEQE_CHANNEL_DIR_PREFIX=${SEQE_CHANNEL_DIR_PREFIX}"
@@ -168,10 +190,62 @@ TRANSFORM_ARGS=()
 if [[ -n "$TILE_TRANSFORM_JSON" ]]; then
     TRANSFORM_ARGS=(--tile_transform_json "${WORK_DIR}/${TILE_TRANSFORM_JSON}")
 fi
+MOSAIC_ARGS=()
+if [[ "$CANVAS_MODE" != "joint" ]]; then
+    MOSAIC_ARGS+=(--canvas_mode "$CANVAS_MODE")
+    if [[ -n "$REF_INPUT_CONFIG" ]]; then
+        MOSAIC_ARGS+=(--ref_canvas_config "${WORK_DIR}/${REF_INPUT_CONFIG}")
+    fi
+fi
+if [[ "$BLEND_ROUNDING" == "true" ]]; then
+    MOSAIC_ARGS+=(--blend_rounding)
+fi
+if [[ "$ROTATE_IMAGES" == "true" ]]; then
+    MOSAIC_ARGS+=(--rotate90)
+fi
 source "$CONDA_SH"
 set +u
 conda activate ashlar
 set -u
+
+# Load the round and channel assignments once for all outputs of this job.
+declare -A PROFILES=()
+if [[ -n "$FLAT_FIELD_MANIFEST" ]]; then
+    PROFILE_ROWS=$(python - "$FLAT_FIELD_MANIFEST" <<'PYTHON'
+import csv
+from pathlib import Path
+import sys
+
+manifest = Path(sys.argv[1])
+with manifest.open(newline="", encoding="utf-8") as handle:
+    assignments = {}
+    for row in csv.DictReader(handle):
+        key = f"{row['round']}/{row['channel']}"
+        if key in assignments:
+            raise ValueError(f"Duplicate flat-field assignment: {key}")
+        assignments[key] = manifest.parent / row['profile_tif']
+    for key, path in assignments.items():
+        print(key, path, sep="\t")
+PYTHON
+    )
+    if [[ -n "$PROFILE_ROWS" ]]; then
+        while IFS=$'\t' read -r key profile_tif; do
+            PROFILES["$key"]="$profile_tif"
+        done <<< "$PROFILE_ROWS"
+    fi
+fi
+
+run_mosaic() {
+    local role="$1" channel="$2"
+    shift 2
+    local profile="${PROFILES[$role/$channel]:-}"
+    local -a flat_args=()
+    if [[ -n "$profile" ]]; then
+        echo "[FLAT_FIELD] ${role}/${channel}=${profile}"
+        flat_args=(--flat_field "$profile")
+    fi
+    python -u "$PY_SCRIPT" "$@" "${MOSAIC_ARGS[@]}" "${flat_args[@]}"
+}
 
 if [[ -n "$REF_CHANNEL_DIR" ]]; then
     REF_CHANNEL_NAME="${REF_CHANNEL_DIR##*/}"
@@ -187,10 +261,7 @@ if [[ -n "$REF_CHANNEL_DIR" ]]; then
         --round_name ref
         "${TRANSFORM_ARGS[@]}"
     )
-    if [[ "$ROTATE_IMAGES" == "true" ]]; then
-        PY_ARGS+=(--rotate90)
-    fi
-    python -u "$PY_SCRIPT" "${PY_ARGS[@]}"
+    run_mosaic ref "${REF_CHANNEL_NAME#raw-}" "${PY_ARGS[@]}"
     [[ -s "${REF_OUTPUT_PREFIX}_2d.ome.tif" ]] || { echo "Error: stitched 2D output missing or empty: ${REF_OUTPUT_PREFIX}_2d.ome.tif" >&2; exit 1; }
 fi
 
@@ -212,10 +283,7 @@ for CHANNEL_NAME in "${CHANNEL_ARRAY[@]}"; do
         --round_name IF
         "${TRANSFORM_ARGS[@]}"
     )
-    if [[ "$ROTATE_IMAGES" == "true" ]]; then
-        PY_ARGS+=(--rotate90)
-    fi
-    python -u "$PY_SCRIPT" "${PY_ARGS[@]}"
+    run_mosaic "$PRIMARY_PROFILE_ROUND" "$CHANNEL_NAME" "${PY_ARGS[@]}"
     [[ -s "$OUTPUT_2D_FILE" ]] || { echo "Error: stitched 2D output missing or empty: $OUTPUT_2D_FILE" >&2; exit 1; }
 done
 
@@ -234,10 +302,7 @@ if [[ -n "$SEQE_CHANNEL_DIR_PREFIX" ]]; then
             --round_name seqE
             "${TRANSFORM_ARGS[@]}"
         )
-        if [[ "$ROTATE_IMAGES" == "true" ]]; then
-            PY_ARGS+=(--rotate90)
-        fi
-        python -u "$PY_SCRIPT" "${PY_ARGS[@]}"
+        run_mosaic seqE "$CHANNEL_NAME" "${PY_ARGS[@]}"
         [[ -s "${OUTPUT_IMAGE_PREFIX}_2d.ome.tif" ]] || { echo "Error: stitched 2D output missing or empty: ${OUTPUT_IMAGE_PREFIX}_2d.ome.tif" >&2; exit 1; }
     done
 fi

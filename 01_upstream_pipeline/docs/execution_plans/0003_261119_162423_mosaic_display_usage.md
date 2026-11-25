@@ -1,16 +1,16 @@
-# 33 Per-round MIP Display Preparation
+# 35 Per-round MIP Display Preparation
 
-`33_prepare_mosaic_display.sh` 将同一轮已经拼接的单通道二维 MIP，打包为多通道金字塔 OME-BigTIFF，并按 profile 保存 RGB 叠加 PNG。IF 和 seqE 分别调用现有入口；不增加新的批量接口。
+`35_prepare_mosaic_display.sh` 将同一轮已经拼接的单通道二维 MIP，打包为多通道金字塔 OME-BigTIFF，并按 profile 保存 RGB 叠加 PNG。IF 和 seqE 分别调用现有入口；不增加新的批量接口。
 
 ## 输入与输出口径
 
 - IF：561-CA9、488-CD144、647-CD31、DAPI，共四通道。
-- seqE：647-GCnt、561-GTrb、DAPI，共三通道。原始 ch02=Padlayer 供解码占位，11a panel 保持四项；拼接、29 清单及 33 不列入 Padlayer。
+- seqE：647-GCnt、561-GTrb、DAPI，共三通道。原始 ch02=Padlayer 供解码占位，11a panel 保持四项；拼接、29 清单及 35 不列入 Padlayer。
 - 每轮内部的像素大小、尺寸、原点、方向和 FOV 布局须一致。IF 与 seqE 可以使用不同 XY 尺寸，分别生成各自的 OME/PNG。
 - 本批只要求二维 MIP 叠加，OME 的 C 轴表示通道，SizeZ=SizeT=1。参考 DAPI 单独保留，不强制与两轮打包。完整三维叠加和 Z 位移补偿不在本批范围。
-- 33 直接读取现成的二维文件，不自行配准或从原始堆栈计算 MIP。通用工具仍支持显式提供的二维 Z 平面，本批清单只列 mip。
+- 35 直接读取现成的二维文件，不自行配准或从原始堆栈计算 MIP。通用工具仍支持显式提供的二维 Z 平面，本批清单只列 mip。
 
-A 路线沿用每轮自然画布，无需为了展示额外统一跨轮画布。B 使用 29 的既有输出，C 使用 32 的既有输出。33 仅核对同一次调用中图像的尺寸，空间匹配由本轮上游出图过程保证。
+A 路线沿用每轮自然画布，无需为了展示额外统一跨轮画布。B 使用 29 的既有输出，C 使用 32 的既有输出。35 仅核对同一次调用中图像的尺寸，空间匹配由本轮上游出图过程保证。
 
 ## 每轮一份输入清单
 
@@ -88,7 +88,7 @@ seqE 示例 `display_seqE_profile.json`：
 
 ## 配置与生成
 
-以下片段合并到完整 `batch_config.upstream.ini`。同一样本、方法的两轮使用不同 job_suffix、清单、profile 和输出目录。仅展示时 JOB 只启用 33；B 若需同时应用变换，可在各自 JOB 中先启用 29。
+以下片段合并到完整 `batch_config.upstream.ini`。同一样本、方法的两轮使用不同 job_suffix、清单、profile 和输出目录。仅展示时 JOB 只启用 35；B 若需同时应用变换，可在各自 JOB 中先启用 29。
 
 ```ini
 [JOB_DISPLAY_IF]
