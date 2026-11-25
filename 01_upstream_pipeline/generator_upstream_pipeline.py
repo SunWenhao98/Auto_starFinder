@@ -255,6 +255,7 @@ STEP_SPECS = {
         log_root_key="stitch_log",
         script_dir_from_wrapper=True,
         sample_position_offset_flag="--position_offset",
+        optional_args=(("prepare_tile_config_maf_match_mode", "--maf_match_mode"),),
     ),
     "fiji_stitch_initial": StepSpec(
         "run_fiji_stitch_initial", "script_fiji_stitch_initial", "fiji_stitch_initial",

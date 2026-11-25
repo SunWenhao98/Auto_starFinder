@@ -6,7 +6,7 @@
 
 ## 输入与准备
 
-三轮需要各自的DAPI tile目录和对应的名义TileConfiguration。31求解器本身保留独立FOV/config输入能力，不要求三轮同名、同数量，也不先取交集。以下标准共享准备方式要求各轮Position覆盖与方法根initial一致，由12在建立链接的边界核对；覆盖不一致时停止并先厘清FOV，不能用共享链接静默省略图像。MAF的物理Position身份与样本offset在准备时核对，不能用过滤后的细胞矩阵清单替代原始拍摄清单。
+三轮需要各自的DAPI tile目录和对应的名义TileConfiguration。31求解器本身保留独立FOV/config输入能力，不要求三轮同名、同数量，也不先取交集。标准共享准备仍按11b→12执行：11b布局各轮全部原始FOV，12按参考轮生成方法根initial，并在建立链接时核对各轮均包含其中要求的Position；缺少必需FOV时停止，额外moving FOV允许且保留布局。读取器按config选图，额外FOV不会自动进入共享config的求解；如需纳入，显式提供该轮独立config。MAF的物理Position身份与样本offset在准备时核对，不能用过滤后的细胞矩阵清单替代原始拍摄清单。
 
 推荐在新的stitching workdir内使用以下实体子目录；11b准备通道布局，12生成初始配置及其链接，31/32读取这些输入：
 

@@ -34,6 +34,7 @@ def _parse_maf_xml(maf_path: Path):
                 )
                 positions.append({
                     'name': name,
+                    'position_id': elem.attrib.get('PositionID'),
                     'phys_x': float(sx) * 1e6,  # m -> µm
                     'phys_y': float(sy) * 1e6,  # m -> µm
                 })
@@ -213,19 +214,32 @@ def main():
     parser.add_argument('--image_xy', type=int, default=2048)
     parser.add_argument('--overlap_ratio', type=float, default=0.1)
     parser.add_argument('--invert_y', action='store_true', default=False)
-    parser.add_argument('--position_offset', type=int, default=0, help='从MAF文件的第几个物理坐标开始匹配(主要用于一个MAF包含多个切片但输出分开的情况)')
+    parser.add_argument('--position_offset', type=int, default=0,
+                        help='Number of MAF rows to skip in ordered mode; base added to the TIFF Position number in position_id mode.')
+    parser.add_argument('--maf_match_mode', choices=['ordered', 'position_id'], default='ordered',
+                        help='Pair sorted TIFFs with MAF rows in order, or look up explicit PositionID values in a full-plate Leica MAF.')
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     
-#   1. 解析MAF XML获取物理坐标并根据切片位置应用数量偏移
+    # Parse acquisition coordinates once, then match using the selected MAF convention.
     t0 = time.time()
     raw_positions = _parse_maf_xml(args.maf_file)
     if not raw_positions:
         logging.error("No positions found.")
         return
         
-    # 应用 offset (截断掉前 offset 个)
-    if args.position_offset > 0:
+    positions_by_id = None
+    if args.maf_match_mode == 'position_id':
+        positions_by_id = {}
+        for position in raw_positions:
+            if position.get('position_id') is None:
+                raise ValueError(f"MAF coordinates must have explicit PositionID values: {args.maf_file}")
+            position_id = int(position['position_id'])
+            if position_id in positions_by_id:
+                raise ValueError(f"Duplicate MAF PositionID {position_id}: {args.maf_file}")
+            positions_by_id[position_id] = position
+        logging.info(f"Matching MAF PositionID using sample offset {args.position_offset}.")
+    elif args.position_offset > 0:
         logging.info(f"Applying position offset: skipping first {args.position_offset} positions.")
         raw_positions = raw_positions[args.position_offset:]
 
@@ -236,16 +250,24 @@ def main():
     pattern = r'Position(\d+)'
     files = sorted(files, key=lambda f: extract_index(f, pattern))
     
-    n_tiles = min(len(files), len(raw_positions))
+    n_tiles = len(files) if positions_by_id is not None else min(len(files), len(raw_positions))
     tiles_data = []
     
     # 构建DataFrame
-    for idx in range(n_tiles):
-        f = files[idx]
-        pos = raw_positions[idx]
+    for idx, f in enumerate(files[:n_tiles]):
         real_id = extract_index(f, pattern)
-        if real_id == float('inf'):
-            real_id = idx + 1
+        if positions_by_id is None:
+            pos = raw_positions[idx]
+            if real_id == float('inf'):
+                real_id = idx + 1
+        else:
+            if real_id == float('inf'):
+                raise ValueError(f"Cannot determine the acquisition Position number: {f.name}")
+            position_id = args.position_offset + real_id
+            try:
+                pos = positions_by_id[position_id]
+            except KeyError:
+                raise ValueError(f"Missing MAF PositionID {position_id} for {f.name}: {args.maf_file}") from None
             
         rel_path = f.relative_to(args.input_dir).as_posix()
             

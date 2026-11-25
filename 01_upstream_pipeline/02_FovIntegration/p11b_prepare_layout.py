@@ -75,18 +75,18 @@ def link_method_initial_files(method_root, round_manifest, config_name, raw_roun
         }
     with round_manifest.open(newline="", encoding="utf-8") as handle:
         rounds = list(csv.DictReader(handle))
-    # A shared initial must not silently omit extra/missing acquisitions in another round.
-    # Check this join once here using directory names, without reading image pixels.
+    # The reference configuration selects the tiles; each round must supply those files.
+    # Extra moving acquisitions remain available in the layout but have no config entry.
     for row in rounds:
         observed = {
             f"Position{int(match.group(1)):03d}"
             for path in (raw_rounds_dir / row["rawdata_round"]).iterdir()
             if path.is_dir() and (match := POSITION_RE.fullmatch(path.name))
         }
-        if observed != expected:
+        missing = expected - observed
+        if missing:
             raise ValueError(
-                f"Shared initial FOV coverage differs for {row['rawdata_round']}: "
-                f"missing={sorted(expected - observed)}, extra={sorted(observed - expected)}"
+                f"Shared initial requires missing FOVs in {row['rawdata_round']}: {sorted(missing)}"
             )
     for row in rounds:
         if not row["subdir"]:

@@ -95,7 +95,7 @@ seqE,round011,LeicaSeqE,seqE
 
 `prepare_layout_mode = symlink` 与 `prepare_layout_output_format = preserve` 为默认组合。各方法、轮次和通道目录都是独立实体目录，目录中的 TIFF 逐文件链接到源文件。Fiji 会在输入通道目录写入坐标配置和整幅拼图，各方法因此需要独立的目录。
 
-`12` 在方法根运行一次，复用同一份 `prepare_layout_round_manifest` 建立上述初始配置和summary链接；链接在初始文件成功生成后创建，不另提交建链作业。共享前核对各轮Position覆盖与根initial实际映射一致；不一致时停止，不能静默丢弃额外或缺失FOV。各方法独立生成自己的initial，不跨方法复制或链接。下文约束后续新运行，不回写已完成结果或历史提交脚本。
+`11b → 12` 顺序不变：11b布局各轮全部原始FOV，12在方法根运行一次，从参考轮生成initial与summary，复用同一份 `prepare_layout_round_manifest` 在成功后建立各轮相对链接，不另提交建链作业。共享前核对各轮均包含根initial要求的Position；缺少必需FOV时停止。moving轮额外FOV保留在布局中，读取器按输入config选图，因此不要求各轮原始FOV集合完全相等。各方法独立生成自己的initial，不跨方法复制或链接。下文约束后续新运行，不回写已完成结果或历史提交脚本。
 
 只有initial和名义summary共用；“只读”指下游仅将它们作为读取输入，不通过链接写入，不改变文件权限或ACL。Fiji通道目录中的 `TileConfiguration.txt` 是工作副本，registered、moving与各轮诊断是独立输出，不能链接回共享initial。`tile_summary.csv` 在各轮保留入口供后续reads整合使用；布局图和preflight只需在方法根保存一份。initial、summary和布局图采用独占写入；新运行使用新的方法工作目录。
 

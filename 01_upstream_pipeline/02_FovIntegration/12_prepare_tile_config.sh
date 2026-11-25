@@ -18,6 +18,7 @@ Options:
   --invert_y BOOL
   --maf_file FILE
   --position_offset INT
+  --maf_match_mode MODE     Leica: ordered (default) or position_id (offset + TIFF Position number)
   --microscope MODE
   --run_fiji_fusion_preflight BOOL
   --fiji_fusion_preflight_report NAME
@@ -28,6 +29,8 @@ Options:
 Run once per method root. For ref/IF/seqE layouts use --source_channel_dir
 ref/raw-refDAPI and --output_config TileConfiguration.initial.txt. The round
 links are read-only inputs; registered/moving outputs belong to each round.
+Moving rounds may contain extra FOVs. All round layouts must cover the
+reference positions in the shared TileConfiguration.
 USAGE
 }
 
@@ -61,6 +64,7 @@ ROUND_MANIFEST=""
 INVERT_Y="false"
 MAF_FILE=""
 POSITION_OFFSET="0"
+MAF_MATCH_MODE="ordered"
 MICROSCOPE="Leica"
 RUN_FIJI_FUSION_PREFLIGHT="true"
 FIJI_FUSION_PREFLIGHT_REPORT="fiji_fusion_preflight.json"
@@ -83,6 +87,7 @@ while [[ $# -gt 0 ]]; do
         --invert_y) INVERT_Y="$2"; shift 2 ;;
         --maf_file) MAF_FILE="$2"; shift 2 ;;
         --position_offset) POSITION_OFFSET="$2"; shift 2 ;;
+        --maf_match_mode) MAF_MATCH_MODE="$2"; shift 2 ;;
         --microscope) MICROSCOPE="$2"; shift 2 ;;
         --run_fiji_fusion_preflight) RUN_FIJI_FUSION_PREFLIGHT="$2"; shift 2 ;;
         --fiji_fusion_preflight_report) FIJI_FUSION_PREFLIGHT_REPORT="$2"; shift 2 ;;
@@ -148,13 +153,19 @@ echo "[PATH] ROUND_MANIFEST=${ROUND_MANIFEST}"
 echo "[PARAM] INVERT_Y=${INVERT_Y}"
 echo "[PARAM] MAF_FILE=${MAF_FILE}"
 echo "[PARAM] POSITION_OFFSET=${POSITION_OFFSET}"
+echo "[PARAM] MAF_MATCH_MODE=${MAF_MATCH_MODE}"
 echo "[PARAM] MICROSCOPE=${MICROSCOPE}"
 echo "[PARAM] RUN_FIJI_FUSION_PREFLIGHT=${RUN_FIJI_FUSION_PREFLIGHT}"
 
 case "$MICROSCOPE" in
     Leica)
         PY_SCRIPT="${SCRIPT_DIR}/p12_leica2Stitching_configuration.py"
-        MICROSCOPE_ARGS=(--maf_file "$MAF_FILE" --position_offset "$POSITION_OFFSET" --project_name "$PROJECT_NAME")
+        MICROSCOPE_ARGS=(
+            --maf_file "$MAF_FILE"
+            --position_offset "$POSITION_OFFSET"
+            --maf_match_mode "$MAF_MATCH_MODE"
+            --project_name "$PROJECT_NAME"
+        )
         ;;
     Olympus)
         PY_SCRIPT="${SCRIPT_DIR}/p12_vsi2Stitching_configuration.py"

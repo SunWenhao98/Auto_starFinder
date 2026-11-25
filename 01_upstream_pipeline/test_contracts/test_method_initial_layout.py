@@ -52,7 +52,26 @@ def layout_inputs(tmp_path):
     return tmp_path, registration, manifest, maf, conda, environment
 
 
-def run_initial(inputs, method, source_channel_dir="ref/raw-refDAPI"):
+@pytest.fixture
+def position_id_layout_inputs(layout_inputs):
+    root, _, _, maf, *_ = layout_inputs
+    for round_name in ("round001", "IF", "round011"):
+        raw_round = root / "Sample/01_data" / round_name
+        for old, new in ((1, 3), (2, 7)):
+            (raw_round / f"Position{old:03d}").rename(raw_round / f"Position{new:03d}")
+    # Keep original board IDs while deliberately changing the XML element order.
+    board_ids = [17, 2, 13, 1, *(value for value in range(1, 19) if value not in (17, 2, 13, 1))]
+    maf.write_text("<MAF>" + "".join(
+        f'<XYZStagePointDefinition PositionID="{value}" '
+        f'StageXPos="{0.001 + value * 0.00001:.8f}" '
+        f'StageYPos="{0.002 + value * 0.00002:.8f}"/>'
+        for value in board_ids
+    ) + "</MAF>")
+    return layout_inputs
+
+
+def run_initial(inputs, method, source_channel_dir="ref/raw-refDAPI", *,
+                positions=(2, 1), position_offset=0, maf_match_mode=None):
     root, registration, manifest, maf, conda, environment = inputs
     work = registration / method
     for role in ("ref", "IF", "seqE"):
@@ -60,8 +79,9 @@ def run_initial(inputs, method, source_channel_dir="ref/raw-refDAPI"):
     source = work / source_channel_dir
     source.mkdir(exist_ok=True)
     # Step 12 enumerates acquisition names and MAF metadata, not TIFF pixels.
-    for position in (2, 1):
+    for position in positions:
         (source / f"Position{position:03d}.tif").write_bytes(b"synthetic acquisition name")
+    match_args = [] if maf_match_mode is None else ["--maf_match_mode", maf_match_mode]
     result = subprocess.run(
         ["bash", str(FOV / "12_prepare_tile_config.sh"),
          "--project_root", str(root), "--project_name", "Sample",
@@ -69,7 +89,7 @@ def run_initial(inputs, method, source_channel_dir="ref/raw-refDAPI"):
          "--source_channel_dir", source_channel_dir, "--match_string", "Position",
          "--pixel_size_um", "1", "--image_xy", "16", "--overlap_ratio", "0.1",
          "--output_config", "TileConfiguration.initial.txt",
-         "--maf_file", str(maf), "--position_offset", "0",
+         "--maf_file", str(maf), "--position_offset", str(position_offset), *match_args,
          "--round_manifest", str(manifest), "--script_dir", str(FOV),
          "--conda_sh", str(conda)],
         env=environment, capture_output=True, text=True, timeout=60,
@@ -192,13 +212,59 @@ def test_foreign_round_link_is_not_replaced(layout_inputs):
     assert foreign.read_bytes() == b"preserve another method's source"
 
 
-def test_shared_initial_does_not_drop_extra_round_fovs(layout_inputs):
-    root, registration, *_ = layout_inputs
-    (root / "Sample/01_data/round011/Position003").mkdir()
+@pytest.mark.parametrize("round_coverage", ["extra", "missing_required"])
+def test_shared_initial_requires_selected_fovs_but_allows_extra_acquisitions(layout_inputs, round_coverage):
+    root, *_ = layout_inputs
+    raw_round = root / "Sample/01_data/round011"
+    if round_coverage == "extra":
+        (raw_round / "Position003").mkdir()
+    else:
+        (raw_round / "Position002").rename(raw_round / "Position003")
     work, result = run_initial(layout_inputs, "A_Fiji")
+    initial = work / "TileConfiguration.initial.txt"
+    assert coordinate_rows(initial) == [
+        ("Position001.tif", (0.0, 0.0, 0.0)),
+        ("Position002.tif", (10.0, 20.0, 0.0)),
+    ]
+    if round_coverage == "extra":
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (work / "seqE/TileConfiguration.initial.txt").resolve(strict=True) == initial
+    else:
+        assert result.returncode != 0
+
+
+def test_position_id_matches_offset_plus_nonconsecutive_acquisition_numbers(position_id_layout_inputs):
+    work, result = run_initial(
+        position_id_layout_inputs, "A_Fiji", positions=(7, 3),
+        position_offset=10, maf_match_mode="position_id",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    initial = work / "TileConfiguration.initial.txt"
+    assert coordinate_rows(initial) == [
+        ("Position003.tif", (0.0, 0.0, 0.0)),
+        ("Position007.tif", (40.0, 80.0, 0.0)),
+    ]
+    with (work / "tile_summary.csv").open() as handle:
+        rows = list(csv.DictReader(handle))
+    assert [int(row["real_id"]) for row in rows] == [3, 7]
+    assert [float(row["phys_x"]) for row in rows] == pytest.approx([1130, 1170])
+    assert [float(row["phys_y"]) for row in rows] == pytest.approx([2260, 2340])
+    for role in ("ref", "IF", "seqE"):
+        assert (work / role / initial.name).resolve(strict=True) == initial
+
+
+@pytest.mark.parametrize("replacement_id", [None, 13, 117],
+                         ids=["missing_id_attribute", "duplicate_maf_id", "missing_required_maf_id"])
+def test_position_id_rejects_missing_or_ambiguous_maf_identity(position_id_layout_inputs, replacement_id):
+    _, _, _, maf, *_ = position_id_layout_inputs
+    attribute = "" if replacement_id is None else f'PositionID="{replacement_id}"'
+    maf.write_text(maf.read_text().replace('PositionID="17"', attribute))
+    work, result = run_initial(
+        position_id_layout_inputs, "A_Fiji", positions=(7, 3),
+        position_offset=10, maf_match_mode="position_id",
+    )
     assert result.returncode != 0
-    assert (work / "TileConfiguration.initial.txt").is_file()
-    assert not (work / "seqE/TileConfiguration.initial.txt").exists()
+    assert not (work / "TileConfiguration.initial.txt").exists()
 
 
 def test_existing_layout_plot_is_not_overwritten(layout_inputs):
@@ -212,14 +278,25 @@ def test_existing_layout_plot_is_not_overwritten(layout_inputs):
     assert protected.read_bytes() == b"preserve an existing layout figure"
 
 
-def test_root_layout_manifest_does_not_link_source_to_itself(layout_inputs):
+@pytest.mark.parametrize("original_board_ids", [False, True], ids=["no_position_id", "derived_submaf"])
+def test_root_layout_manifest_does_not_link_source_to_itself(layout_inputs, original_board_ids):
     _, _, manifest, *_ = layout_inputs
+    if original_board_ids:
+        maf = layout_inputs[3]
+        maf.write_text(
+            '<MAF><XYZStagePointDefinition PositionID="13" StageXPos="0.001" StageYPos="0.002"/>'
+            '<XYZStagePointDefinition PositionID="17" StageXPos="0.00101" StageYPos="0.00202"/></MAF>'
+        )
     with manifest.open("w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(["role", "rawdata_round", "channel_mode", "subdir"])
         writer.writerow(["ref", "round001", "LeicaRef", ""])
     work, result = run_initial(layout_inputs, "A_Fiji", "raw-refDAPI")
     assert result.returncode == 0, result.stdout + result.stderr
+    assert coordinate_rows(work / "TileConfiguration.initial.txt") == [
+        ("Position001.tif", (0.0, 0.0, 0.0)),
+        ("Position002.tif", (10.0, 20.0, 0.0)),
+    ]
     for name in ("TileConfiguration.initial.txt", "tile_summary.csv"):
         assert (work / name).is_file()
         assert not (work / name).is_symlink()
